@@ -10,14 +10,14 @@ import (
 
 	tls "github.com/bogdanfinn/utls"
 
-	"github.com/bogdanfinn/quic-go-utls/internal/handshake"
-	"github.com/bogdanfinn/quic-go-utls/internal/monotime"
-	"github.com/bogdanfinn/quic-go-utls/internal/protocol"
-	"github.com/bogdanfinn/quic-go-utls/internal/qerr"
-	"github.com/bogdanfinn/quic-go-utls/internal/utils"
-	"github.com/bogdanfinn/quic-go-utls/internal/wire"
-	"github.com/bogdanfinn/quic-go-utls/qlog"
-	"github.com/bogdanfinn/quic-go-utls/qlogwriter"
+	"github.com/igor-lemon/quic-go-utls/internal/handshake"
+	"github.com/igor-lemon/quic-go-utls/internal/monotime"
+	"github.com/igor-lemon/quic-go-utls/internal/protocol"
+	"github.com/igor-lemon/quic-go-utls/internal/qerr"
+	"github.com/igor-lemon/quic-go-utls/internal/utils"
+	"github.com/igor-lemon/quic-go-utls/internal/wire"
+	"github.com/igor-lemon/quic-go-utls/qlog"
+	"github.com/igor-lemon/quic-go-utls/qlogwriter"
 )
 
 // ErrServerClosed is returned by the [Listener] or [EarlyListener]'s Accept method after a call to Close.

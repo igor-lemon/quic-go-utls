@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	http "github.com/bogdanfinn/fhttp"
-	"github.com/bogdanfinn/fhttp/httptest"
+	http "github.com/igor-lemon/fhttp"
+	"github.com/igor-lemon/fhttp/httptest"
 	tls "github.com/bogdanfinn/utls"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/bogdanfinn/quic-go-utls"
+	"github.com/igor-lemon/quic-go-utls"
 )
 
 type mockBody struct {

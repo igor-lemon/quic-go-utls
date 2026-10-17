@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	http "github.com/bogdanfinn/fhttp"
-	"github.com/bogdanfinn/fhttp/httptest"
+	http "github.com/igor-lemon/fhttp"
+	"github.com/igor-lemon/fhttp/httptest"
 	"github.com/quic-go/qpack"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bogdanfinn/quic-go-utls"
-	"github.com/bogdanfinn/quic-go-utls/http3/qlog"
-	"github.com/bogdanfinn/quic-go-utls/qlogwriter"
-	"github.com/bogdanfinn/quic-go-utls/testutils/events"
+	"github.com/igor-lemon/quic-go-utls"
+	"github.com/igor-lemon/quic-go-utls/http3/qlog"
+	"github.com/igor-lemon/quic-go-utls/qlogwriter"
+	"github.com/igor-lemon/quic-go-utls/testutils/events"
 )
 
 func decodeRequestHeaderFields(t *testing.T, str io.Reader, streamID quic.StreamID, eventRecorder *events.Recorder) []qpack.HeaderField {

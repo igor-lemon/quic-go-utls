@@ -18,13 +18,13 @@ import (
 	"testing"
 	"time"
 
-	http "github.com/bogdanfinn/fhttp"
+	http "github.com/igor-lemon/fhttp"
 	tls "github.com/bogdanfinn/utls"
 
-	"github.com/bogdanfinn/quic-go-utls"
-	"github.com/bogdanfinn/quic-go-utls/http3/qlog"
-	"github.com/bogdanfinn/quic-go-utls/qlogwriter"
-	"github.com/bogdanfinn/quic-go-utls/quicvarint"
+	"github.com/igor-lemon/quic-go-utls"
+	"github.com/igor-lemon/quic-go-utls/http3/qlog"
+	"github.com/igor-lemon/quic-go-utls/qlogwriter"
+	"github.com/igor-lemon/quic-go-utls/quicvarint"
 	"github.com/quic-go/qpack"
 
 	"github.com/stretchr/testify/require"

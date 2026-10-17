@@ -10,10 +10,10 @@ import (
 
 	tls "github.com/bogdanfinn/utls"
 
-	"github.com/bogdanfinn/quic-go-utls"
-	"github.com/bogdanfinn/quic-go-utls/internal/protocol"
-	"github.com/bogdanfinn/quic-go-utls/internal/synctest"
-	"github.com/bogdanfinn/quic-go-utls/testutils/simnet"
+	"github.com/igor-lemon/quic-go-utls"
+	"github.com/igor-lemon/quic-go-utls/internal/protocol"
+	"github.com/igor-lemon/quic-go-utls/internal/synctest"
+	"github.com/igor-lemon/quic-go-utls/testutils/simnet"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

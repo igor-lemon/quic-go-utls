@@ -1,10 +1,10 @@
-module github.com/bogdanfinn/quic-go-utls
+module github.com/igor-lemon/quic-go-utls
 
 go 1.24.1
 
 require (
-	github.com/bogdanfinn/fhttp v0.6.9
 	github.com/bogdanfinn/utls v1.7.8-barnius
+	github.com/igor-lemon/fhttp v0.6.10-0.20261017214052-a61392fc6180
 	github.com/quic-go/qpack v0.6.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2
@@ -35,6 +35,6 @@ tool (
 	go.uber.org/mock/mockgen
 )
 
-//replace github.com/bogdanfinn/fhttp => ../fhttp
+//replace github.com/igor-lemon/fhttp => ../fhttp
 
 //replace github.com/bogdanfinn/utls => ../utls

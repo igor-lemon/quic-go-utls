@@ -3,7 +3,7 @@ package qlog
 import (
 	"testing"
 
-	"github.com/bogdanfinn/quic-go-utls/internal/protocol"
+	"github.com/igor-lemon/quic-go-utls/internal/protocol"
 
 	"github.com/stretchr/testify/require"
 )

@@ -6,14 +6,14 @@ import (
 	"net"
 	"os"
 
-	http "github.com/bogdanfinn/fhttp"
+	http "github.com/igor-lemon/fhttp"
 	tls "github.com/bogdanfinn/utls"
 
-	"github.com/bogdanfinn/quic-go-utls"
-	"github.com/bogdanfinn/quic-go-utls/http3"
-	"github.com/bogdanfinn/quic-go-utls/internal/qtls"
-	"github.com/bogdanfinn/quic-go-utls/interop/http09"
-	"github.com/bogdanfinn/quic-go-utls/interop/utils"
+	"github.com/igor-lemon/quic-go-utls"
+	"github.com/igor-lemon/quic-go-utls/http3"
+	"github.com/igor-lemon/quic-go-utls/internal/qtls"
+	"github.com/igor-lemon/quic-go-utls/interop/http09"
+	"github.com/igor-lemon/quic-go-utls/interop/utils"
 )
 
 func main() {
