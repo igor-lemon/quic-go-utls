@@ -4,8 +4,8 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/bogdanfinn/quic-go-utls/internal/protocol"
-	list "github.com/bogdanfinn/quic-go-utls/internal/utils/linkedlist"
+	"github.com/igor-lemon/quic-go-utls/internal/protocol"
+	list "github.com/igor-lemon/quic-go-utls/internal/utils/linkedlist"
 )
 
 // byteInterval is an interval from one ByteCount to the other

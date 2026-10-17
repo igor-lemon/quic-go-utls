@@ -6,11 +6,11 @@ import (
 	"flag"
 	"os"
 
-	tls "github.com/bogdanfinn/utls"
+	tls "github.com/igor-lemon/utls"
 
-	"github.com/bogdanfinn/quic-go-utls"
-	"github.com/bogdanfinn/quic-go-utls/integrationtests/tools"
-	"github.com/bogdanfinn/quic-go-utls/qlogwriter"
+	"github.com/igor-lemon/quic-go-utls"
+	"github.com/igor-lemon/quic-go-utls/integrationtests/tools"
+	"github.com/igor-lemon/quic-go-utls/qlogwriter"
 )
 
 var (

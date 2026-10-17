@@ -1,10 +1,10 @@
-module github.com/bogdanfinn/quic-go-utls
+module github.com/igor-lemon/quic-go-utls
 
 go 1.27
 
 require (
-	github.com/bogdanfinn/fhttp v0.7.3
-	github.com/bogdanfinn/utls v1.8.2-barnius
+	github.com/igor-lemon/fhttp v0.6.10-0.20261108185233-87f7dcb80e8a
+	github.com/igor-lemon/utls v1.7.8-barnius.0.20261106190843-4b54ea578c9d
 	github.com/quic-go/qpack v0.6.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2

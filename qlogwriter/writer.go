@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bogdanfinn/quic-go-utls/qlogwriter/jsontext"
+	"github.com/igor-lemon/quic-go-utls/qlogwriter/jsontext"
 )
 
 // Trace represents a qlog trace that can have multiple event producers.

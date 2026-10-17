@@ -5,9 +5,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/bogdanfinn/quic-go-utls"
-	"github.com/bogdanfinn/quic-go-utls/internal/handshake"
-	"github.com/bogdanfinn/quic-go-utls/internal/protocol"
+	"github.com/igor-lemon/quic-go-utls"
+	"github.com/igor-lemon/quic-go-utls/internal/handshake"
+	"github.com/igor-lemon/quic-go-utls/internal/protocol"
 )
 
 func Fuzz(data []byte) int {

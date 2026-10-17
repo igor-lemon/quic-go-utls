@@ -5,9 +5,9 @@ import (
 	"errors"
 	"net"
 
-	tls "github.com/bogdanfinn/utls"
+	tls "github.com/igor-lemon/utls"
 
-	"github.com/bogdanfinn/quic-go-utls/internal/protocol"
+	"github.com/igor-lemon/quic-go-utls/internal/protocol"
 )
 
 // make it possible to mock connection ID for initial generation in the tests
