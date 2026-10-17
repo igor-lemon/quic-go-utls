@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
+	tls "github.com/bogdanfinn/utls"
 	http "github.com/igor-lemon/fhttp"
 	"github.com/igor-lemon/fhttp/httptrace"
-	tls "github.com/bogdanfinn/utls"
 
 	"golang.org/x/sync/errgroup"
 

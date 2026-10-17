@@ -12,9 +12,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	tls "github.com/bogdanfinn/utls"
 	http "github.com/igor-lemon/fhttp"
 	"github.com/igor-lemon/fhttp/httptrace"
-	tls "github.com/bogdanfinn/utls"
 	"golang.org/x/net/http/httpguts"
 
 	"github.com/igor-lemon/quic-go-utls"

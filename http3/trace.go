@@ -5,8 +5,8 @@ import (
 	"net/textproto"
 	"time"
 
-	"github.com/igor-lemon/fhttp/httptrace"
 	tls "github.com/bogdanfinn/utls"
+	"github.com/igor-lemon/fhttp/httptrace"
 
 	"github.com/igor-lemon/quic-go-utls"
 )

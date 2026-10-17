@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	tls "github.com/bogdanfinn/utls"
 	http "github.com/igor-lemon/fhttp"
 	"github.com/igor-lemon/fhttp/httptrace"
-	tls "github.com/bogdanfinn/utls"
 
 	"github.com/igor-lemon/quic-go-utls/http3"
 	"github.com/stretchr/testify/require"

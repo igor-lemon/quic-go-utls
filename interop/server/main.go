@@ -6,8 +6,8 @@ import (
 	"net"
 	"os"
 
-	http "github.com/igor-lemon/fhttp"
 	tls "github.com/bogdanfinn/utls"
+	http "github.com/igor-lemon/fhttp"
 
 	"github.com/igor-lemon/quic-go-utls"
 	"github.com/igor-lemon/quic-go-utls/http3"

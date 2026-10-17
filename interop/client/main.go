@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	http "github.com/igor-lemon/fhttp"
 	tls "github.com/bogdanfinn/utls"
+	http "github.com/igor-lemon/fhttp"
 
 	"golang.org/x/sync/errgroup"
 
