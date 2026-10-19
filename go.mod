@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	github.com/bogdanfinn/utls v1.7.8-barnius
-	github.com/igor-lemon/fhttp v0.6.10-0.20261018225256-a883624a8f5e
+	github.com/igor-lemon/fhttp v0.6.10-0.20261019084828-31f8ce39ba64
 	github.com/quic-go/qpack v0.6.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2
