@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unsafe"
 
-	tls "github.com/bogdanfinn/utls"
+	tls "github.com/igor-lemon/utls"
 
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +21,7 @@ type cipherSuiteTLS13 struct {
 	Hash   crypto.Hash
 }
 
-//go:linkname cipherSuitesTLS13 github.com/bogdanfinn/utls.cipherSuitesTLS13
+//go:linkname cipherSuitesTLS13 github.com/igor-lemon/utls.cipherSuitesTLS13
 var cipherSuitesTLS13 []unsafe.Pointer
 
 func cipherSuiteTLS13ByID(id uint16) *cipherSuiteTLS13 {
@@ -34,7 +34,7 @@ func cipherSuiteTLS13ByID(id uint16) *cipherSuiteTLS13 {
 	return nil
 }
 
-//go:linkname nextTrafficSecret github.com/bogdanfinn/utls.(*cipherSuiteTLS13).nextTrafficSecret
+//go:linkname nextTrafficSecret github.com/igor-lemon/utls.(*cipherSuiteTLS13).nextTrafficSecret
 func nextTrafficSecret(cs *cipherSuiteTLS13, trafficSecret []byte) []byte
 
 func TestHKDF(t *testing.T) {

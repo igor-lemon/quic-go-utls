@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	tls "github.com/bogdanfinn/utls"
+	tls "github.com/igor-lemon/utls"
 
 	"github.com/igor-lemon/quic-go-utls/internal/testdata"
 

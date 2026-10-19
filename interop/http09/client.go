@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	tls "github.com/bogdanfinn/utls"
 	http "github.com/igor-lemon/fhttp"
+	tls "github.com/igor-lemon/utls"
 
 	"golang.org/x/net/idna"
 

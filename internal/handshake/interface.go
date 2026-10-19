@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 
-	tls "github.com/bogdanfinn/utls"
+	tls "github.com/igor-lemon/utls"
 
 	"github.com/igor-lemon/quic-go-utls/internal/monotime"
 	"github.com/igor-lemon/quic-go-utls/internal/protocol"

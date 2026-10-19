@@ -11,7 +11,7 @@ import (
 	mrand "math/rand/v2"
 	"testing"
 
-	tls "github.com/bogdanfinn/utls"
+	tls "github.com/igor-lemon/utls"
 
 	"golang.org/x/crypto/cryptobyte"
 

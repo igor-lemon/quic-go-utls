@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	tls "github.com/bogdanfinn/utls"
+	tls "github.com/igor-lemon/utls"
 
 	"github.com/igor-lemon/quic-go-utls/internal/protocol"
 	"github.com/igor-lemon/quic-go-utls/internal/qerr"

@@ -6,9 +6,9 @@ import (
 	"net"
 	"testing"
 
-	tls "github.com/bogdanfinn/utls"
 	http "github.com/igor-lemon/fhttp"
 	"github.com/igor-lemon/fhttp/httptest"
+	tls "github.com/igor-lemon/utls"
 
 	"github.com/igor-lemon/quic-go-utls"
 	"github.com/igor-lemon/quic-go-utls/internal/testdata"
