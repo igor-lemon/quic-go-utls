@@ -113,6 +113,10 @@ type StatelessResetToken [16]byte
 // Ethernet's max packet size is 1500 bytes,  1500 - 48 = 1452.
 const MaxPacketBufferSize = 1452
 
+// MaxReceivePacketBufferSize also accepts Chromium's 1472-byte UDP receive
+// ceiling. This does not raise the initial packet size or transmit-path MTU.
+const MaxReceivePacketBufferSize = 1472
+
 // MaxLargePacketBufferSize is used when using GSO
 const MaxLargePacketBufferSize = 20 * 1024
 

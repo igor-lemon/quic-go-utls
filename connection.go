@@ -482,6 +482,15 @@ var newClientConnection = func(
 	} else {
 		params.MaxDatagramFrameSize = protocol.InvalidByteCount
 	}
+	if conf.ChromeBehavior {
+		params.ChromeBehavior = true
+		params.MaxAckDelay = protocol.DefaultMaxAckDelay
+		params.ActiveConnectionIDLimit = protocol.DefaultActiveConnectionIDLimit
+		params.MaxUDPPayloadSize = protocol.MaxReceivePacketBufferSize
+		if conf.EnableDatagrams {
+			params.MaxDatagramFrameSize = 65536
+		}
+	}
 	if s.qlogger != nil {
 		s.qlogTransportParameters(params, protocol.PerspectiveClient, false)
 	}
@@ -559,6 +568,11 @@ func (c *Conn) preSetup() {
 	c.creationTime = now
 
 	c.receivedPacketHandler = *ackhandler.NewReceivedPacketHandler(c.logger)
+	if c.perspective == protocol.PerspectiveClient && c.config.ChromeBehavior {
+		c.connIDManager.maxActiveConnectionIDs = protocol.DefaultActiveConnectionIDLimit
+		// Keep one timer-granularity margin inside the advertised default25ms.
+		c.receivedPacketHandler.SetMaxAckDelay(protocol.DefaultMaxAckDelay - protocol.TimerGranularity)
+	}
 
 	c.datagramQueue = newDatagramQueue(c.scheduleSending, c.logger)
 	c.connState.Version = c.version
@@ -2135,7 +2149,11 @@ func (c *Conn) handleAckFrame(frame *wire.AckFrame, encLevel protocol.Encryption
 }
 
 func (c *Conn) handleDatagramFrame(f *wire.DatagramFrame) error {
-	if f.Length(c.version) > wire.MaxDatagramSize {
+	limit := wire.MaxDatagramSize
+	if c.perspective == protocol.PerspectiveClient && c.config.ChromeBehavior {
+		limit = 65536
+	}
+	if f.Length(c.version) > limit {
 		return &qerr.TransportError{
 			ErrorCode:    qerr.ProtocolViolation,
 			ErrorMessage: "DATAGRAM frame too large",

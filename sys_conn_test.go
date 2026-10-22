@@ -18,7 +18,7 @@ func TestBasicConn(t *testing.T) {
 	addr := &net.UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 1234}
 	c.EXPECT().ReadFrom(gomock.Any()).DoAndReturn(func(b []byte) (int, net.Addr, error) {
 		data := []byte("foobar")
-		require.Equal(t, protocol.MaxPacketBufferSize, len(b))
+		require.Equal(t, protocol.MaxReceivePacketBufferSize, len(b))
 		return copy(b, data), addr, nil
 	})
 

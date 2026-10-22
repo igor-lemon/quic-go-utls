@@ -69,9 +69,9 @@ func TestParseStreamFrameRejectsOverflow(t *testing.T) {
 }
 
 func TestParseStreamFrameRejectsLongFrames(t *testing.T) {
-	data := encodeVarInt(0x12345)                                                // stream ID
-	data = append(data, encodeVarInt(uint64(protocol.MaxPacketBufferSize)+1)...) // data length
-	data = append(data, make([]byte, protocol.MaxPacketBufferSize+1)...)
+	data := encodeVarInt(0x12345)                                                       // stream ID
+	data = append(data, encodeVarInt(uint64(protocol.MaxReceivePacketBufferSize)+1)...) // data length
+	data = append(data, make([]byte, protocol.MaxReceivePacketBufferSize+1)...)
 	_, _, err := ParseStreamFrame(data, 0x8^0x2, protocol.Version1)
 	require.Equal(t, io.EOF, err)
 }

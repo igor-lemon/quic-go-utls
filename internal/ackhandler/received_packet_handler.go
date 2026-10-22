@@ -2,6 +2,7 @@ package ackhandler
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/igor-lemon/quic-go-utls/internal/monotime"
 	"github.com/igor-lemon/quic-go-utls/internal/protocol"
@@ -24,6 +25,11 @@ func NewReceivedPacketHandler(logger utils.Logger) *ReceivedPacketHandler {
 		appDataPackets:   *newAppDataReceivedPacketTracker(logger),
 		lowest1RTTPacket: protocol.InvalidPacketNumber,
 	}
+}
+
+// SetMaxAckDelay sets the application-data ACK timer before receiving packets.
+func (h *ReceivedPacketHandler) SetMaxAckDelay(delay time.Duration) {
+	h.appDataPackets.maxAckDelay = delay
 }
 
 func (h *ReceivedPacketHandler) ReceivedPacket(
