@@ -28,7 +28,7 @@ var bodyCopyBufferSize = behavior.Legacy().Int("h3.body_copy_bytes")
 type requestWriter struct {
 	behavior          behavior.Policy
 	mutex             sync.Mutex
-	encoder           *qpack.Encoder
+	encoder           *policyQPACKEncoder
 	headerBuf         *bytes.Buffer
 	pseudoHeaderOrder []string
 	priorityParam     uint32
@@ -36,7 +36,7 @@ type requestWriter struct {
 
 func newRequestWriter() *requestWriter {
 	headerBuf := &bytes.Buffer{}
-	encoder := qpack.NewEncoder(headerBuf)
+	encoder := newPolicyQPACKEncoder(headerBuf)
 	return &requestWriter{
 		encoder:   encoder,
 		headerBuf: headerBuf,
@@ -47,7 +47,7 @@ func newRequestWriter() *requestWriter {
 
 func newRequestWriterWithPseudoHeaderOrder(pseudoHeaderOrder []string, priorityParam uint32) *requestWriter {
 	headerBuf := &bytes.Buffer{}
-	encoder := qpack.NewEncoder(headerBuf)
+	encoder := newPolicyQPACKEncoder(headerBuf)
 	order := pseudoHeaderOrder
 	if order == nil || len(order) == 0 {
 		// Default Chrome-like order: method, authority, scheme, path
@@ -80,6 +80,12 @@ func (w *requestWriter) writeHeaders(wr io.Writer, req *http.Request, gzip bool,
 	defer w.mutex.Unlock()
 	defer w.encoder.Close()
 	defer w.headerBuf.Reset()
+	pol := w.behavior
+	if pol == nil {
+		pol = behavior.Legacy()
+	}
+	w.encoder.names = pol.Text("h3.qpack.huffman_names")
+	w.encoder.values = pol.Text("h3.qpack.huffman_values")
 
 	headerFields, err := w.encodeHeaders(req, gzip, "", actualContentLength(req), qlogger != nil)
 	if err != nil {

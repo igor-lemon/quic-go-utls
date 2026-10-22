@@ -1,0 +1,74 @@
+{
+  "source": "engine-major-20261022-r15 actual headed minimized Chrome155.0.8059.85/macOS27.0.1;owned loopback;static-only peer",
+  "fields": [
+    {
+      "name": ":method",
+      "value": "GET"
+    },
+    {
+      "name": ":authority",
+      "value": "127.0.0.1:19100"
+    },
+    {
+      "name": ":scheme",
+      "value": "https"
+    },
+    {
+      "name": ":path",
+      "value": "/test"
+    },
+    {
+      "name": "sec-ch-ua",
+      "value": "\"Google Chrome\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\""
+    },
+    {
+      "name": "sec-ch-ua-mobile",
+      "value": "?0"
+    },
+    {
+      "name": "sec-ch-ua-platform",
+      "value": "\"macOS\""
+    },
+    {
+      "name": "upgrade-insecure-requests",
+      "value": "1"
+    },
+    {
+      "name": "user-agent",
+      "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+    },
+    {
+      "name": "accept",
+      "value": "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+    },
+    {
+      "name": "sec-fetch-site",
+      "value": "none"
+    },
+    {
+      "name": "sec-fetch-mode",
+      "value": "navigate"
+    },
+    {
+      "name": "sec-fetch-user",
+      "value": "?1"
+    },
+    {
+      "name": "sec-fetch-dest",
+      "value": "document"
+    },
+    {
+      "name": "accept-encoding",
+      "value": "gzip, deflate, br, zstd"
+    },
+    {
+      "name": "accept-language",
+      "value": "en-US,en;q=0.9"
+    },
+    {
+      "name": "priority",
+      "value": "u=0, i"
+    }
+  ],
+  "payload": "0000d1508b089d5c0b8170dc0be1003fd751846125427f2f004148b1275ad1ffb8fe711cf350552f4f61e92ff3f7de0fe42db7fcfd29fcde9ec3d26b69fe7efbc1fc85b6ff9fa53f9d274ff50dcbb60ea93f9fbef07f226bf92f044148b1275ad1ad49e33505023f302f064148b1275ad1ad5d034ca7b29f07226d61634f5322ff1f5f50d9d07f66a281b0dae053fad0321aa49d13fda992a49685340c8a6adca7e28104416e277fb521aeba0bc8b1e632586d975765c53facd8f7e8cff4a506ea5531149d4ffda97a7b0f49580b6dae05c0b814dc394761986d975765cf5f0eec497ca589d34d1f43aeba0c41a4c7a98f33a69a3fdf9a68fa1d75d0620d263d4c79a68fbed00177fe8d48e62b1d3cd1f46a4731581f734bf46a473158f058ebfa352398ac0ebaa6faf963e7efb4005defa1d75d0620d263d4c20d35459162f924e3aa62fdf782367efb4005dd2f034148b4a549275906497f83a8f5172f034148b4a549275a93c85f86a87dcd30d25f2f034148b4a549275ad416cf023f312f034148b4a549275a42a13f8690e4b692d49f5f10929bd9abfa5242cb40d25fa523b3e94f684c9f5f398b2d4b70ddf45abefb4005df2eaec31ec327d785b6007d286f"
+}
