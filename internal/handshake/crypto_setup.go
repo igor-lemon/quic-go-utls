@@ -315,8 +315,11 @@ func (h *cryptoSetup) NextEvent() Event {
 }
 
 func (h *cryptoSetup) handleTransportParameters(data []byte) error {
-	var tp wire.TransportParameters
+	tp := wire.TransportParameters{ChromeBehavior: h.perspective == protocol.PerspectiveClient && h.tlsConf != nil && h.tlsConf.ChromeBehavior}
 	if err := tp.Unmarshal(data, h.perspective.Opposite()); err != nil {
+		if tp.ChromeBehavior && tp.VersionInformationPresent {
+			return &qerr.TransportError{ErrorCode: qerr.ProtocolViolation, ErrorMessage: err.Error()}
+		}
 		return err
 	}
 	h.peerParams = &tp
@@ -687,6 +690,10 @@ func (h *cryptoSetup) ConnectionState() ConnectionState {
 }
 
 func wrapError(err error) error {
+	var transportError *qerr.TransportError
+	if errors.As(err, &transportError) {
+		return err
+	}
 	if alertErr := tls.AlertError(0); errors.As(err, &alertErr) {
 		return qerr.NewLocalCryptoError(uint8(alertErr), err)
 	}

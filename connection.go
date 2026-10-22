@@ -484,6 +484,9 @@ var newClientConnection = func(
 	}
 	if conf.ChromeBehavior {
 		params.ChromeBehavior = true
+		// This policy offers only v1 as a compatible first flight. Do not list
+		// v2 just because the generic backend also implements it.
+		params.VersionInformation = &wire.VersionInformation{ChosenVersion: v, AvailableVersions: protocol.GetGreasedVersions([]protocol.Version{v})}
 		params.MaxAckDelay = protocol.DefaultMaxAckDelay
 		params.ActiveConnectionIDLimit = protocol.DefaultActiveConnectionIDLimit
 		params.MaxUDPPayloadSize = protocol.MaxReceivePacketBufferSize
@@ -1603,6 +1606,9 @@ func (c *Conn) handleVersionNegotiationPacket(p receivedPacket) error {
 		return nil
 	}
 
+	if c.config.ChromeBehavior && (!bytes.Equal(src, c.origDestConnID.Bytes()) || dest.Len() != 0 || c.receivedRetry) {
+		return nil
+	}
 	if slices.Contains(supportedVersions, c.version) {
 		if c.qlogger != nil {
 			c.qlogger.RecordEvent(qlog.PacketDropped{
@@ -2374,6 +2380,10 @@ func (c *Conn) handleTransportParameters(params *wire.TransportParameters) error
 		c.qlogTransportParameters(params, c.perspective.Opposite(), false)
 	}
 	if err := c.checkTransportParameters(params); err != nil {
+		var transportError *qerr.TransportError
+		if errors.As(err, &transportError) {
+			return err
+		}
 		return &qerr.TransportError{
 			ErrorCode:    qerr.TransportParameterError,
 			ErrorMessage: err.Error(),
@@ -2408,6 +2418,18 @@ func (c *Conn) checkTransportParameters(params *wire.TransportParameters) error 
 		c.logger.Debugf("Processed Transport Parameters: %s", params)
 	}
 
+	if info := params.VersionInformation; info != nil && info.ChosenVersion != c.version {
+		code := qerr.VersionNegotiationErrorCode
+		if c.perspective == protocol.PerspectiveClient && c.config != nil && c.config.ChromeBehavior {
+			code = qerr.ProtocolViolation
+		}
+		return &qerr.TransportError{ErrorCode: code, ErrorMessage: "version_information chosen version differs from packet version"}
+	}
+	// Chrome's client policy is v1-only. No other version (including a
+	// reserved probe) may be selected, and no cross-version fallback is offered.
+	if c.perspective == protocol.PerspectiveClient && c.config != nil && c.config.ChromeBehavior && params.VersionInformation != nil && params.VersionInformation.ChosenVersion != protocol.Version1 {
+		return &qerr.TransportError{ErrorCode: qerr.ProtocolViolation, ErrorMessage: "server selected an unoffered compatible version"}
+	}
 	// check the initial_source_connection_id
 	if params.InitialSourceConnectionID != c.handshakeDestConnID {
 		return fmt.Errorf("expected initial_source_connection_id to equal %s, is %s", c.handshakeDestConnID, params.InitialSourceConnectionID)
