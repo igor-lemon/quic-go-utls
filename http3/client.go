@@ -152,6 +152,8 @@ func newClientConn(
 		c.logger,
 		0,
 	)
+	c.conn.qpack = newQPACKSession(c.conn, additionalSettings, pol)
+	c.requestWriter.dynamic = c.conn.qpack.encoder
 	// send the SETTINGs frame, using 0-RTT data, if possible
 	go func() {
 		c.setupErr = c.setupConn()
@@ -198,6 +200,9 @@ func (c *ClientConn) waitForSetup(ctx context.Context) error {
 }
 
 func (c *ClientConn) setupConn() error {
+	if c.additionalSettings[1] > qpackTableSafetyLimit || c.additionalSettings[7] > qpackBlockedSafetyLimit {
+		return errors.New("QPACK settings exceed engine safety bounds")
+	}
 	// open the control stream
 	str, err := c.conn.OpenUniStream()
 	if err != nil {
@@ -245,6 +250,9 @@ func (c *ClientConn) setupConn() error {
 	}
 
 	_, err = str.Write(b)
+	if err == nil && c.behavior.Text("h3.qpack.streams") == "eager" {
+		err = c.conn.qpack.startEager()
+	}
 	return err
 }
 

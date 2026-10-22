@@ -29,6 +29,8 @@ type requestWriter struct {
 	behavior          behavior.Policy
 	mutex             sync.Mutex
 	encoder           *policyQPACKEncoder
+	dynamic           *dynamicQPACKEncoder
+	collected         []qpack.HeaderField
 	headerBuf         *bytes.Buffer
 	pseudoHeaderOrder []string
 	priorityParam     uint32
@@ -87,11 +89,20 @@ func (w *requestWriter) writeHeaders(wr io.Writer, req *http.Request, gzip bool,
 	w.encoder.names = pol.Text("h3.qpack.huffman_names")
 	w.encoder.values = pol.Text("h3.qpack.huffman_values")
 
+	w.collected = nil
 	headerFields, err := w.encodeHeaders(req, gzip, "", actualContentLength(req), qlogger != nil)
 	if err != nil {
 		return err
 	}
 
+	if w.dynamic != nil {
+		encoded, e := w.dynamic.encode(uint64(streamID), w.collected)
+		if e != nil {
+			return e
+		}
+		w.headerBuf.Reset()
+		w.headerBuf.Write(encoded)
+	}
 	b := make([]byte, 0, 128)
 	b = (&headersFrame{Length: uint64(w.headerBuf.Len())}).Append(b)
 	if qlogger != nil {
@@ -293,6 +304,7 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 	}
 	enumerateHeaders(func(name, value string) {
 		name = strings.ToLower(name)
+		w.collected = append(w.collected, qpack.HeaderField{Name: name, Value: value})
 		w.encoder.WriteField(qpack.HeaderField{Name: name, Value: value})
 		if traceHeaders {
 			traceWroteHeaderField(trace, name, value)
