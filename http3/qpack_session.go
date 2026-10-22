@@ -75,14 +75,23 @@ type qpackSession struct {
 	encoder                      *dynamicQPACKEncoder
 	encoderWriter, decoderWriter *qpackInstructionWriter
 	order                        []uint64
+	closeSpace                   string
+	closeCode                    uint64
+	closeFrame                   uint64
+	closeReason                  string
 }
 
 func newQPACKSession(c *Conn, settings map[uint64]uint64, pol behavior.Policy) *qpackSession {
 	s := &qpackSession{conn: c, encoderWriter: newQPACKInstructionWriter(c, 2), decoderWriter: newQPACKInstructionWriter(c, 3)}
 	s.order = pol.Numbers("h3.qpack.stream_order")
+	s.closeSpace = pol.Text("h3.qpack.critical_close_space")
+	s.closeCode = uint64(pol.Int("h3.qpack.critical_close_code"))
+	s.closeFrame = uint64(pol.Int("h3.qpack.critical_close_frame_type"))
+	s.closeReason = pol.Text("h3.qpack.critical_close_reason")
 	s.decoder = newDynamicQPACKDecoder(settings[1], settings[7], s.decoderWriter.send)
 	s.decoder.feedbackMode = pol.Text("h3.qpack.decoder_feedback")
 	s.encoder = newDynamicQPACKEncoder(pol.Text("h3.qpack.encoder_strategy"), pol.Text("h3.qpack.huffman_names"), pol.Text("h3.qpack.huffman_values"), pol.Strings("h3.qpack.never_index"), s.encoderWriter.send)
+	s.encoder.drainingPercent = uint64(pol.Int("h3.qpack.draining_percent"))
 	s.encoder.budget = uint64(pol.Int("h3.qpack.encoder_table_bytes"))
 	s.encoder.warmup = uint64(pol.Int("h3.qpack.encoder_warmup_sections"))
 	s.encoder.baseMode = pol.Text("h3.qpack.reference_base")
@@ -100,12 +109,14 @@ func (s *qpackSession) receive(r io.Reader, encoder bool) {
 	if s.conn.Context().Err() != nil {
 		return
 	}
-	if err == io.EOF {
-		code = ErrCodeClosedCriticalStream
-	}
 	var reset *quic.StreamError
-	if errors.As(err, &reset) {
-		code = ErrCodeClosedCriticalStream
+	if err == io.EOF || errors.As(err, &reset) {
+		if s.closeSpace == "transport" {
+			s.conn.conn.CloseWithTransportError(quic.TransportErrorCode(s.closeCode), s.closeFrame, s.closeReason)
+		} else {
+			s.conn.CloseWithError(quic.ApplicationErrorCode(s.closeCode), s.closeReason)
+		}
+		return
 	}
 	s.conn.CloseWithError(quic.ApplicationErrorCode(code), "invalid or closed QPACK critical stream")
 }

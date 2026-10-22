@@ -2218,6 +2218,14 @@ func (c *Conn) CloseWithError(code ApplicationErrorCode, desc string) error {
 	return nil
 }
 
+// CloseWithTransportError terminates with a QUIC transport CONNECTION_CLOSE.
+// It is distinct from the application error space used by CloseWithError.
+func (c *Conn) CloseWithTransportError(code TransportErrorCode, frameType uint64, desc string) error {
+	c.closeLocal(&qerr.TransportError{ErrorCode: code, FrameType: frameType, ErrorMessage: desc})
+	<-c.ctx.Done()
+	return nil
+}
+
 func (c *Conn) closeWithTransportError(code TransportErrorCode) {
 	c.closeLocal(&qerr.TransportError{ErrorCode: code})
 	<-c.ctx.Done()

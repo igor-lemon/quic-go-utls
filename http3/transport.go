@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -148,6 +149,9 @@ var (
 )
 
 func (t *Transport) init() error {
+	if t.Behavior == nil {
+		t.Behavior = behavior.Legacy()
+	}
 	if t.newClientConn == nil {
 		t.newClientConn = func(conn *quic.Conn) clientConn {
 			return newClientConn(
@@ -278,10 +282,10 @@ func (t *Transport) roundTripOpt(req *http.Request, opt RoundTripOpt) (*http.Res
 		}
 	}
 
-	return t.doRoundTripOpt(req, opt, false)
+	return t.doRoundTripOpt(req, opt, 0)
 }
 
-func (t *Transport) doRoundTripOpt(req *http.Request, opt RoundTripOpt, isRetried bool) (*http.Response, error) {
+func (t *Transport) doRoundTripOpt(req *http.Request, opt RoundTripOpt, attempt int) (*http.Response, error) {
 	hostname := authorityAddr(hostnameFromURL(req.URL))
 	trace := httptrace.ContextClientTrace(req.Context())
 	traceGetConn(trace, hostname)
@@ -310,18 +314,70 @@ func (t *Transport) doRoundTripOpt(req *http.Request, opt RoundTripOpt, isRetrie
 			return nil, err
 		default:
 		}
-		if isRetried {
-			return nil, err
-		}
-
 		t.removeClient(hostname)
-		req, err = canRetryRequest(err, req)
+		retryReq, retryErr := (*http.Request)(nil), err
+		if attempt < t.Behavior.Int("h3.retry_unprocessed_attempts")-1 {
+			retryReq, retryErr = canRetryRequest(err, req)
+		}
+		if retryErr != nil && attempt < t.Behavior.Int("h3.retry_attempts")-1 && t.retryProtocolError(err, req) {
+			retryReq, retryErr = replayH3Request(req)
+		}
+		req, err = retryReq, retryErr
 		if err != nil {
 			return nil, err
 		}
-		return t.doRoundTripOpt(req, opt, true)
+		return t.doRoundTripOpt(req, opt, attempt+1)
 	}
 	return rsp, nil
+}
+
+// Protocol-error replay is opt-in by method and exact error space/code. It
+// happens only before a response is returned; body-read failures never enter it.
+func (t *Transport) retryProtocolError(err error, req *http.Request) bool {
+	if req.Context().Err() != nil || !slices.Contains(t.Behavior.Strings("h3.retry_methods"), req.Method) {
+		return false
+	}
+	// An explicit profile cannot make a non-idempotent operation safe to replay.
+	switch req.Method {
+	case "GET", "HEAD", "OPTIONS", "TRACE", "PUT", "DELETE":
+	default:
+		return false
+	}
+	var app *quic.ApplicationError
+	var transport *quic.TransportError
+	var h3 *Error
+	var qp *qpackWireError
+	var code uint64
+	key := "h3.retry_application_errors"
+	switch {
+	case errors.As(err, &transport):
+		code = uint64(transport.ErrorCode)
+		key = "h3.retry_transport_errors"
+	case errors.As(err, &app):
+		code = uint64(app.ErrorCode)
+	case errors.As(err, &h3):
+		code = uint64(h3.ErrorCode)
+	case errors.As(err, &qp):
+		code = uint64(qp.code)
+	default:
+		return false
+	}
+	return slices.Contains(t.Behavior.Numbers(key), code)
+}
+func replayH3Request(req *http.Request) (*http.Request, error) {
+	if req.Body == nil || req.Body == http.NoBody {
+		return req, nil
+	}
+	if req.GetBody == nil {
+		return nil, errors.New("http3: protocol retry requires a replayable body")
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	copy := req.Clone(req.Context())
+	copy.Body = body
+	return copy, nil
 }
 
 func canRetryRequest(err error, req *http.Request) (*http.Request, error) {

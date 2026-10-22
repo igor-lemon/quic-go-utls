@@ -439,6 +439,7 @@ func (d *dynamicQPACKDecoder) decode(ctx context.Context, stream uint64, block [
 // are generic JSON-selected primitives, independent of browser identity.
 type dynamicQPACKEncoder struct {
 	budget              uint64
+	drainingPercent     uint64
 	warmup, sections    uint64
 	baseMode            string
 	blockedLimit        uint64
@@ -561,6 +562,17 @@ func (e *dynamicQPACKEncoder) encode(stream uint64, fields []qpack.HeaderField) 
 		}
 	}
 	mayBlock := alreadyBlocked || blockedStreams < e.blockedLimit
+	// Stop adding references to the oldest selected capacity fraction. The
+	// threshold is fixed for this section; newly inserted entries stay usable.
+	draining := e.table.inserted
+	space := e.table.capacity - e.table.size
+	for _, entry := range e.table.entries {
+		if space >= e.table.capacity*e.drainingPercent/100 {
+			draining = entry.id
+			break
+		}
+		space += entrySize(entry.field)
+	}
 	reference := func(id uint64) {
 		reps = append(reps, representation{absolute: id, dynamic: true})
 		refs[id] = true
@@ -587,18 +599,34 @@ func (e *dynamicQPACKEncoder) encode(stream uint64, fields []qpack.HeaderField) 
 		found := false
 		referenced := false
 		if allowed {
-			for _, entry := range e.table.entries {
+			for i := len(e.table.entries) - 1; i >= 0; i-- {
+				entry := e.table.entries[i]
 				if entry.field == f {
 					found = true
-					if entry.id < e.known || mayBlock {
+					if entry.id >= draining && (entry.id < e.known || mayBlock) {
 						reference(entry.id)
 						referenced = true
+					} else if entry.id < draining && mayBlock && e.mode == "insert" {
+						// Keep the source through the Duplicate instruction; do not
+						// evict an unacknowledged or pinned prefix to make room.
+						relative := e.table.inserted - entry.id - 1
+						if e.table.insert(f, func(id uint64) bool { return id != entry.id && !refs[id] && e.evictable(id) }) {
+							instructions = appendQPACKInt(instructions, 5, 0, relative)
+							reference(e.table.inserted - 1)
+							referenced = true
+						}
+					}
+					// A draining exact match that cannot be duplicated may still
+					// be inserted via a static name. That insertion can evict the
+					// old value; unlike Duplicate it does not depend on its source.
+					if !referenced && entry.id < draining && literal[0]&0xd0 == 0x50 {
+						found = false
 					}
 					break
 				}
 			}
 		}
-		if allowed && !found {
+		if allowed && !found && (mayBlock || e.mode == "reuse") {
 			// Resolve the name reference before insertion, which may evict the source.
 			var insertion []byte
 			if literal[0]&0xd0 == 0x50 {
