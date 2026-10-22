@@ -106,6 +106,7 @@ func populateConfig(config *Config) *Config {
 	}
 
 	return &Config{
+		ChromeBehavior:                   config.ChromeBehavior,
 		GetConfigForClient:               config.GetConfigForClient,
 		Versions:                         versions,
 		HandshakeIdleTimeout:             handshakeIdleTimeout,

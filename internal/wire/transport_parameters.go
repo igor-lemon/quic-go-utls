@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"net/netip"
 	"slices"
 	"time"
@@ -61,6 +62,8 @@ type PreferredAddress struct {
 
 // TransportParameters are parameters sent to the peer during the handshake
 type TransportParameters struct {
+	// ChromeBehavior is a local serialization policy, never parsed from a peer.
+	ChromeBehavior                 bool
 	InitialMaxStreamDataBidiLocal  protocol.ByteCount
 	InitialMaxStreamDataBidiRemote protocol.ByteCount
 	InitialMaxStreamDataUni        protocol.ByteCount
@@ -358,9 +361,15 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 	b := make([]byte, 0, 256)
 
 	// add a greased value
-	random := make([]byte, 18)
+	random := make([]byte, 26)
 	rand.Read(random)
-	b = quicvarint.Append(b, 27+31*uint64(random[0]))
+	id := 27 + 31*uint64(random[0])
+	if p.ChromeBehavior && pers == protocol.PerspectiveClient {
+		// QUICHE uses the full62-bit reserved family, not an8-bit subset.
+		x := binary.BigEndian.Uint64(random[18:26]) % ((uint64(1) << 62) - 31)
+		id = x/31*31 + 27
+	}
+	b = quicvarint.Append(b, id)
 	length := random[1] % 16
 	b = quicvarint.Append(b, uint64(length))
 	b = append(b, random[2:2+length]...)
@@ -467,7 +476,42 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 		}
 	}
 
+	if p.ChromeBehavior && pers == protocol.PerspectiveClient {
+		b = shuffleTransportParameters(b)
+	}
 	return b
+}
+
+// Shuffle complete TLVs, preserving their encoded values, unknown parameters,
+// and lengths. Parameters have no specified ordering (RFC9000 section18).
+func shuffleTransportParameters(b []byte) []byte {
+	var fields [][]byte
+	for rest := b; len(rest) > 0; {
+		_, idLen, err := quicvarint.Parse(rest)
+		if err != nil {
+			panic(err)
+		} // locally generated TLVs
+		n, lenLen, err := quicvarint.Parse(rest[idLen:])
+		if err != nil || n > uint64(len(rest)-idLen-lenLen) {
+			panic("invalid local transport parameter")
+		}
+		end := idLen + lenLen + int(n)
+		fields = append(fields, rest[:end])
+		rest = rest[end:]
+	}
+	for i := len(fields) - 1; i > 0; i-- {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			panic(err)
+		}
+		j := int(n.Int64())
+		fields[i], fields[j] = fields[j], fields[i]
+	}
+	out := make([]byte, 0, len(b))
+	for _, field := range fields {
+		out = append(out, field...)
+	}
+	return out
 }
 
 func (p *TransportParameters) marshalVarintParam(b []byte, id transportParameterID, val uint64) []byte {

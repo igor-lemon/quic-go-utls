@@ -109,6 +109,10 @@ type ConnectionIDGenerator interface {
 
 // Config contains all configuration data needed for a QUIC server or client.
 type Config struct {
+	// ChromeBehavior enables the measured Chromium client CID and transport policy.
+	// It has no effect on servers. A client must use a dedicated UDP socket with
+	// zero-length source IDs (the HTTP/3 Chrome dialer supplies one).
+	ChromeBehavior bool
 	// GetConfigForClient is called for incoming connections.
 	// If the error is not nil, the connection attempt is refused.
 	GetConfigForClient func(info *ClientInfo) (*Config, error)

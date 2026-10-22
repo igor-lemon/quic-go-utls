@@ -279,7 +279,12 @@ func (t *Transport) doDial(
 	if err != nil {
 		return nil, err
 	}
-	destConnID, err := generateConnectionIDForInitial()
+	var destConnID protocol.ConnectionID
+	if config.ChromeBehavior {
+		destConnID, err = protocol.GenerateConnectionID(8)
+	} else {
+		destConnID, err = generateConnectionIDForInitial()
+	}
 	if err != nil {
 		return nil, err
 	}
