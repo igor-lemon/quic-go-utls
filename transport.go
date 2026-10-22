@@ -245,6 +245,11 @@ func (t *Transport) DialEarly(ctx context.Context, addr net.Addr, tlsConf *tls.C
 }
 
 func (t *Transport) dial(ctx context.Context, addr net.Addr, host string, tlsConf *tls.Config, conf *Config, use0RTT bool) (*Conn, error) {
+	var err error
+	conf, err = chromeClientVersionPolicy(conf)
+	if err != nil {
+		return nil, err
+	}
 	if err := t.init(t.isSingleUse); err != nil {
 		return nil, err
 	}

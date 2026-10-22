@@ -69,6 +69,8 @@ const (
 	AEADLimitReached = qerr.AEADLimitReached
 	// NoViablePathError is the NO_VIABLE_PATH_ERROR transport error code.
 	NoViablePathError = qerr.NoViablePathError
+	// VersionNegotiationErrorCode is RFC9368's authenticated version error.
+	VersionNegotiationErrorCode = qerr.VersionNegotiationErrorCode
 )
 
 // A StreamError is used to signal stream cancellations.

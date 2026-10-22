@@ -45,6 +45,7 @@ const (
 	activeConnectionIDLimitParameterID         transportParameterID = 0xe
 	initialSourceConnectionIDParameterID       transportParameterID = 0xf
 	retrySourceConnectionIDParameterID         transportParameterID = 0x10
+	versionInformationParameterID              transportParameterID = 0x11
 	// RFC 9221
 	maxDatagramFrameSizeParameterID transportParameterID = 0x20
 	// https://datatracker.ietf.org/doc/draft-ietf-quic-reliable-stream-reset/06/
@@ -61,7 +62,17 @@ type PreferredAddress struct {
 }
 
 // TransportParameters are parameters sent to the peer during the handshake
+// VersionInformation is authenticated by the TLS handshake (RFC9368).
+// The compatible first-flight versions are distinct from all supported versions.
+type VersionInformation struct {
+	ChosenVersion     protocol.Version
+	AvailableVersions []protocol.Version
+}
+
 type TransportParameters struct {
+	VersionInformation *VersionInformation
+	// VersionInformationPresent records a locally parsed parameter,even on failure.
+	VersionInformationPresent bool
 	// ChromeBehavior is a local serialization policy, never parsed from a peer.
 	ChromeBehavior                 bool
 	InitialMaxStreamDataBidiLocal  protocol.ByteCount
@@ -115,6 +126,8 @@ func (p *TransportParameters) unmarshal(b []byte, sentBy protocol.Perspective, f
 		readInitialSourceConnectionID       bool
 	)
 
+	p.VersionInformation = nil
+	p.VersionInformationPresent = false
 	p.AckDelayExponent = protocol.DefaultAckDelayExponent
 	p.MaxAckDelay = protocol.DefaultMaxAckDelay
 	p.MaxDatagramFrameSize = protocol.InvalidByteCount
@@ -126,6 +139,9 @@ func (p *TransportParameters) unmarshal(b []byte, sentBy protocol.Perspective, f
 			return err
 		}
 		paramID := transportParameterID(paramIDInt)
+		if paramID == versionInformationParameterID {
+			p.VersionInformationPresent = true
+		}
 		b = b[l:]
 		paramLen, l, err := quicvarint.Parse(b)
 		if err != nil {
@@ -208,6 +224,26 @@ func (p *TransportParameters) unmarshal(b []byte, sentBy protocol.Perspective, f
 			connID := protocol.ParseConnectionID(b[:paramLen])
 			b = b[paramLen:]
 			p.RetrySourceConnectionID = &connID
+		case versionInformationParameterID:
+			if paramLen < 4 || paramLen%4 != 0 {
+				return errors.New("invalid version_information length")
+			}
+			info := &VersionInformation{ChosenVersion: protocol.Version(binary.BigEndian.Uint32(b[:4]))}
+			if info.ChosenVersion == 0 {
+				return errors.New("zero chosen version")
+			}
+			for i := 4; i < int(paramLen); i += 4 {
+				v := protocol.Version(binary.BigEndian.Uint32(b[i : i+4]))
+				if v == 0 && !(p.ChromeBehavior && sentBy == protocol.PerspectiveServer) {
+					return errors.New("zero available version")
+				}
+				info.AvailableVersions = append(info.AvailableVersions, v)
+			}
+			if sentBy == protocol.PerspectiveClient && !slices.Contains(info.AvailableVersions, info.ChosenVersion) {
+				return errors.New("client chosen version absent from available versions")
+			}
+			p.VersionInformation = info
+			b = b[paramLen:]
 		case resetStreamAtParameterID:
 			if paramLen != 0 {
 				return fmt.Errorf("wrong length for reset_stream_at: %d (expected empty)", paramLen)
@@ -454,6 +490,14 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 		b = quicvarint.Append(b, uint64(retrySourceConnectionIDParameterID))
 		b = quicvarint.Append(b, uint64(p.RetrySourceConnectionID.Len()))
 		b = append(b, p.RetrySourceConnectionID.Bytes()...)
+	}
+	if info := p.VersionInformation; info != nil {
+		b = quicvarint.Append(b, uint64(versionInformationParameterID))
+		b = quicvarint.Append(b, uint64(4+4*len(info.AvailableVersions)))
+		b = binary.BigEndian.AppendUint32(b, uint32(info.ChosenVersion))
+		for _, v := range info.AvailableVersions {
+			b = binary.BigEndian.AppendUint32(b, uint32(v))
+		}
 	}
 	// QUIC datagrams
 	if p.MaxDatagramFrameSize != protocol.InvalidByteCount {
