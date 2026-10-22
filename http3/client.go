@@ -54,6 +54,11 @@ type ClientConn struct {
 	behavior behavior.Policy
 	conn     *Conn
 
+	// Requests wait until the local control stream preface and SETTINGS are queued.
+	// This is a protocol ordering barrier, independent of browser policy.
+	setupComplete chan struct{}
+	setupErr      error
+
 	// Enable support for HTTP/3 datagrams (RFC 9297).
 	// If a QUICConfig is set, datagram support also needs to be enabled on the QUIC layer by setting enableDatagrams.
 	enableDatagrams bool
@@ -116,6 +121,7 @@ func newClientConn(
 	}
 	c := &ClientConn{
 		behavior:                pol,
+		setupComplete:           make(chan struct{}),
 		enableDatagrams:         enableDatagrams,
 		additionalSettings:      additionalSettings,
 		additionalSettingsOrder: additionalSettingsOrder,
@@ -148,7 +154,9 @@ func newClientConn(
 	)
 	// send the SETTINGs frame, using 0-RTT data, if possible
 	go func() {
-		if err := c.setupConn(); err != nil {
+		c.setupErr = c.setupConn()
+		close(c.setupComplete)
+		if err := c.setupErr; err != nil {
 			if c.logger != nil {
 				c.logger.Debug("Setting up connection failed", "error", err)
 			}
@@ -164,7 +172,29 @@ func newClientConn(
 
 // OpenRequestStream opens a new request stream on the HTTP/3 connection.
 func (c *ClientConn) OpenRequestStream(ctx context.Context) (*RequestStream, error) {
+	if err := c.waitForSetup(ctx); err != nil {
+		return nil, err
+	}
 	return c.conn.openRequestStream(ctx, c.requestWriter, nil, c.disableCompression, c.maxResponseHeaderBytes)
+}
+
+// waitForSetup waits for local initialization, never for peer SETTINGS or an ACK.
+// Closing setupComplete publishes setupErr and the completed stream Write, whose
+// onHasStreamData callback enqueues the control stream before any request stream.
+func (c *ClientConn) waitForSetup(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	select {
+	case <-c.setupComplete:
+		return c.setupErr
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.conn.Context().Done():
+		return context.Cause(c.conn.Context())
+	}
 }
 
 func (c *ClientConn) setupConn() error {
@@ -323,6 +353,9 @@ func (c *ClientConn) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (c *ClientConn) roundTrip(req *http.Request) (*http.Response, error) {
+	if err := c.waitForSetup(req.Context()); err != nil {
+		return nil, &errConnUnusable{e: err}
+	}
 	// Immediately send out this request, if this is a 0-RTT request.
 	switch req.Method {
 	case MethodGet0RTT:
