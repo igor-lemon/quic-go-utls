@@ -555,10 +555,12 @@ func (h *cryptoSetup) setWriteKey(el tls.QUICEncryptionLevel, suiteID uint16, tr
 func (h *cryptoSetup) writeRecord(encLevel tls.QUICEncryptionLevel, p []byte) {
 	//nolint:exhaustive // handshake records can only be written for Initial and Handshake.
 	switch encLevel {
+	// TLS event Data is only valid until NextEvent; the QUIC connection
+	// consumes these queued events after the TLS event loop has advanced.
 	case tls.QUICEncryptionLevelInitial:
-		h.events = append(h.events, Event{Kind: EventWriteInitialData, Data: p})
+		h.events = append(h.events, Event{Kind: EventWriteInitialData, Data: append([]byte(nil), p...)})
 	case tls.QUICEncryptionLevelHandshake:
-		h.events = append(h.events, Event{Kind: EventWriteHandshakeData, Data: p})
+		h.events = append(h.events, Event{Kind: EventWriteHandshakeData, Data: append([]byte(nil), p...)})
 	case tls.QUICEncryptionLevelApplication:
 		panic("unexpected write")
 	default:

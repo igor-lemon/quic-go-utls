@@ -191,6 +191,38 @@ func (t *Transport) init() error {
 	return nil
 }
 
+// Preconnect establishes and caches a verified QUIC connection without sending
+// an HTTP request. A caller racing transports selects one before dispatching the
+// request, so uploads and side effects are never raced or replayed here.
+func (t *Transport) Preconnect(ctx context.Context, addr string) error {
+	t.initOnce.Do(func() { t.initErr = t.init() })
+	if t.initErr != nil {
+		return t.initErr
+	}
+	cl, _, err := t.getClient(ctx, addr, false)
+	if err != nil {
+		return err
+	}
+	defer cl.useCount.Add(-1)
+	select {
+	case <-cl.dialing:
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+	if cl.dialErr != nil {
+		t.removeClient(addr)
+		return cl.dialErr
+	}
+	select {
+	case <-cl.conn.HandshakeComplete():
+		return nil
+	case <-cl.conn.Context().Done():
+		return context.Cause(cl.conn.Context())
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+}
+
 // RoundTripOpt is like RoundTrip, but takes options.
 func (t *Transport) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.Response, error) {
 	rsp, err := t.roundTripOpt(req, opt)
