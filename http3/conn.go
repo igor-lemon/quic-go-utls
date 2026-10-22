@@ -43,6 +43,7 @@ type Conn struct {
 	enableDatagrams bool
 
 	decoder *qpack.Decoder
+	qpack   *qpackSession
 
 	streamMx     sync.Mutex
 	streams      map[quic.StreamID]*stateTrackingStream
@@ -176,9 +177,9 @@ func (c *Conn) openRequestStream(
 	c.streamMx.Unlock()
 	rsp := &http.Response{}
 	trace := httptrace.ContextClientTrace(ctx)
-	return newRequestStream(
+	rs := newRequestStream(
 		newStream(hstr, c, trace, func(r io.Reader, hf *headersFrame) error {
-			hdr, err := c.decodeTrailers(r, str.StreamID(), hf, maxHeaderBytes)
+			hdr, err := c.decodeTrailers(r, str.StreamID(), hf, maxHeaderBytes, ctx)
 			if err != nil {
 				return err
 			}
@@ -191,10 +192,14 @@ func (c *Conn) openRequestStream(
 		disableCompression,
 		maxHeaderBytes,
 		rsp,
-	), nil
+	)
+	rs.qpack = c.qpack
+	rs.decodeContext, rs.cancelDecode = context.WithCancel(ctx)
+	hstr.decodeCancel = rs.cancelDecode
+	return rs, nil
 }
 
-func (c *Conn) decodeTrailers(r io.Reader, streamID quic.StreamID, hf *headersFrame, maxHeaderBytes int) (http.Header, error) {
+func (c *Conn) decodeTrailers(r io.Reader, streamID quic.StreamID, hf *headersFrame, maxHeaderBytes int, contexts ...context.Context) (http.Header, error) {
 	// If maxHeaderBytes is negative, don't enforce limit (used when not sending SETTINGS_MAX_FIELD_SECTION_SIZE)
 	if maxHeaderBytes >= 0 && hf.Length > uint64(maxHeaderBytes) {
 		maybeQlogInvalidHeadersFrame(c.qlogger, streamID, hf.Length)
@@ -206,6 +211,13 @@ func (c *Conn) decodeTrailers(r io.Reader, streamID quic.StreamID, hf *headersFr
 		return nil, err
 	}
 	decodeFn := c.decoder.Decode(b)
+	if c.qpack != nil {
+		ctx := c.Context()
+		if len(contexts) > 0 {
+			ctx = contexts[0]
+		}
+		decodeFn = c.qpack.decode(ctx, streamID, b, maxHeaderBytes)
+	}
 	var fields []qpack.HeaderField
 	if c.qlogger != nil {
 		fields = make([]qpack.HeaderField, 0, 16)
@@ -282,13 +294,17 @@ func (c *Conn) handleUnidirectionalStreams(hijack func(StreamType, quic.Connecti
 				if isFirst := rcvdQPACKEncoderStr.CompareAndSwap(false, true); !isFirst {
 					c.CloseWithError(quic.ApplicationErrorCode(ErrCodeStreamCreationError), "duplicate QPACK encoder stream")
 				}
-				// Our QPACK implementation doesn't use the dynamic table yet.
+				if c.qpack != nil {
+					c.qpack.receive(str, true)
+				}
 				return
 			case streamTypeQPACKDecoderStream:
 				if isFirst := rcvdQPACKDecoderStr.CompareAndSwap(false, true); !isFirst {
 					c.CloseWithError(quic.ApplicationErrorCode(ErrCodeStreamCreationError), "duplicate QPACK decoder stream")
 				}
-				// Our QPACK implementation doesn't use the dynamic table yet.
+				if c.qpack != nil {
+					c.qpack.receive(str, false)
+				}
 				return
 			case streamTypePushStream:
 				if c.isServer {
@@ -344,6 +360,9 @@ func (c *Conn) handleControlStream(str *quic.ReceiveStream) {
 		EnableDatagrams:       sf.Datagram,
 		EnableExtendedConnect: sf.ExtendedConnect,
 		Other:                 sf.Other,
+	}
+	if c.qpack != nil {
+		c.qpack.encoder.configure(sf.Other[1], sf.Other[7])
 	}
 	close(c.receivedSettings)
 	if sf.Datagram {

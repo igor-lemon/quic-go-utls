@@ -170,6 +170,9 @@ type RequestStream struct {
 	responseBody io.ReadCloser // set by ReadResponse
 
 	decoder            *qpack.Decoder
+	qpack              *qpackSession
+	decodeContext      context.Context
+	cancelDecode       context.CancelFunc
 	requestWriter      *requestWriter
 	maxHeaderBytes     int
 	reqDone            chan<- struct{}
@@ -345,6 +348,9 @@ func (s *RequestStream) ReadResponse() (*http.Response, error) {
 		return nil, fmt.Errorf("http3: failed to read response headers: %w", err)
 	}
 	decodeFn := s.decoder.Decode(headerBlock)
+	if s.qpack != nil {
+		decodeFn = s.qpack.decode(s.decodeContext, s.StreamID(), headerBlock, s.maxHeaderBytes)
+	}
 	var hfs []qpack.HeaderField
 	if s.str.qlogger != nil {
 		hfs = make([]qpack.HeaderField, 0, 16)

@@ -3,6 +3,7 @@ package http3
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"sync"
 
@@ -29,7 +30,9 @@ type stateTrackingStream struct {
 	sendErr error
 	recvErr error
 
-	clearer streamClearer
+	clearer      streamClearer
+	qpackCancel  sync.Once
+	decodeCancel context.CancelFunc
 }
 
 var _ datagramStream = &stateTrackingStream{}
@@ -101,14 +104,35 @@ func (s *stateTrackingStream) Write(b []byte) (int, error) {
 }
 
 func (s *stateTrackingStream) CancelRead(e quic.StreamErrorCode) {
+	s.qpackAbandon()
 	s.closeReceive(&quic.StreamError{StreamID: s.StreamID(), ErrorCode: e})
 	s.Stream.CancelRead(e)
+}
+
+func (s *stateTrackingStream) qpackAbandon() {
+	s.mx.Lock()
+	complete := s.recvErr == io.EOF
+	s.mx.Unlock()
+	if complete {
+		return
+	}
+	if s.decodeCancel != nil {
+		s.decodeCancel()
+	}
+	s.qpackCancel.Do(func() {
+		if c, ok := s.clearer.(*Conn); ok && c.qpack != nil {
+			c.qpack.cancel(s.StreamID())
+		}
+	})
 }
 
 func (s *stateTrackingStream) Read(b []byte) (int, error) {
 	n, err := s.Stream.Read(b)
 	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
 		s.closeReceive(err)
+		if err != io.EOF {
+			s.qpackAbandon()
+		}
 	}
 	return n, err
 }
