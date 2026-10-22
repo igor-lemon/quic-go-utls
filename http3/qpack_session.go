@@ -16,14 +16,15 @@ import (
 // lock is held while waiting for QUIC flow control. Queue exhaustion terminates
 // the connection instead of dropping a mandatory instruction or deadlocking.
 type qpackInstructionWriter struct {
-	conn  *Conn
-	kind  uint64
-	queue chan []byte
-	start sync.Once
+	conn   *Conn
+	kind   uint64
+	queue  chan []byte
+	start  sync.Once
+	policy behavior.Policy
 }
 
-func newQPACKInstructionWriter(c *Conn, kind uint64) *qpackInstructionWriter {
-	return &qpackInstructionWriter{conn: c, kind: kind, queue: make(chan []byte, 64)}
+func newQPACKInstructionWriter(c *Conn, kind uint64, pol behavior.Policy) *qpackInstructionWriter {
+	return &qpackInstructionWriter{conn: c, kind: kind, queue: make(chan []byte, 64), policy: pol}
 }
 func (w *qpackInstructionWriter) open() (*quic.SendStream, error) {
 	str, err := w.conn.OpenUniStreamSync(w.conn.Context())
@@ -35,7 +36,7 @@ func (w *qpackInstructionWriter) open() (*quic.SendStream, error) {
 func (w *qpackInstructionWriter) run() {
 	str, err := w.open()
 	if err != nil {
-		w.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeClosedCriticalStream), "QPACK stream unavailable")
+		w.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeClosedCriticalStream), qpackReason(w.policy, "h3.qpack.error_stream_unavailable_reason", err, 0))
 		return
 	}
 	w.pump(str)
@@ -47,7 +48,7 @@ func (w *qpackInstructionWriter) pump(str *quic.SendStream) {
 			return
 		case b := <-w.queue:
 			if _, err := str.Write(b); err != nil {
-				w.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeClosedCriticalStream), "QPACK stream write failed")
+				w.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeClosedCriticalStream), qpackReason(w.policy, "h3.qpack.error_stream_write_reason", err, 0))
 				return
 			}
 		}
@@ -64,7 +65,7 @@ func (w *qpackInstructionWriter) send(b []byte) error {
 	case w.queue <- append([]byte(nil), b...):
 		return nil
 	default:
-		w.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeExcessiveLoad), "QPACK instruction queue exhausted")
+		w.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeExcessiveLoad), qpackReason(w.policy, "h3.qpack.error_queue_exhausted_reason", nil, 0))
 		return errors.New("QPACK instruction queue exhausted")
 	}
 }
@@ -79,10 +80,11 @@ type qpackSession struct {
 	closeCode                    uint64
 	closeFrame                   uint64
 	closeReason                  string
+	policy                       behavior.Policy
 }
 
 func newQPACKSession(c *Conn, settings map[uint64]uint64, pol behavior.Policy) *qpackSession {
-	s := &qpackSession{conn: c, encoderWriter: newQPACKInstructionWriter(c, 2), decoderWriter: newQPACKInstructionWriter(c, 3)}
+	s := &qpackSession{conn: c, encoderWriter: newQPACKInstructionWriter(c, 2, pol), decoderWriter: newQPACKInstructionWriter(c, 3, pol), policy: pol}
 	s.order = pol.Numbers("h3.qpack.stream_order")
 	s.closeSpace = pol.Text("h3.qpack.critical_close_space")
 	s.closeCode = uint64(pol.Int("h3.qpack.critical_close_code"))
@@ -118,7 +120,11 @@ func (s *qpackSession) receive(r io.Reader, encoder bool) {
 		}
 		return
 	}
-	s.conn.CloseWithError(quic.ApplicationErrorCode(code), "invalid or closed QPACK critical stream")
+	fallback := "decoder"
+	if encoder {
+		fallback = "encoder"
+	}
+	s.conn.CloseWithError(quic.ApplicationErrorCode(code), qpackReason(s.policy, qpackProblemKey(err, fallback), err, 0))
 }
 func (s *qpackSession) decode(ctx context.Context, id quic.StreamID, b []byte, limit int) qpack.DecodeFunc {
 	// Even when the advertised field-section limit is disabled, retain a hard
@@ -135,7 +141,7 @@ func (s *qpackSession) decode(ctx context.Context, id quic.StreamID, b []byte, l
 	if err != nil {
 		var wire *qpackWireError
 		if errors.As(err, &wire) {
-			s.conn.CloseWithError(quic.ApplicationErrorCode(wire.code), wire.Error())
+			s.conn.CloseWithError(quic.ApplicationErrorCode(wire.code), qpackReason(s.policy, qpackProblemKey(wire, "decompression"), wire, uint64(id)))
 		}
 	}
 	i := 0

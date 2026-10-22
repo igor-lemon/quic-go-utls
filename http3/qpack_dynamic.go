@@ -198,7 +198,7 @@ func (d *dynamicQPACKDecoder) instruction(r *bufio.Reader) error {
 			return e
 		}
 		if capacity > d.maximum {
-			return errQPACKWire
+			return qpackProblemOf("capacity_exceeded", errQPACKWire)
 		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -335,7 +335,7 @@ func (d *dynamicQPACKDecoder) decode(ctx context.Context, stream uint64, block [
 			absolute = base + index
 		} else {
 			if index >= base {
-				return qpack.HeaderField{}, errQPACKWire
+				return qpack.HeaderField{}, qpackProblemOf("invalid_relative_index", errQPACKWire)
 			}
 			absolute = base - index - 1
 		}
@@ -518,7 +518,9 @@ func (e *dynamicQPACKEncoder) feedback(r io.Reader) error {
 		case first&0xc0 == 0x40:
 			delete(e.outstanding, n)
 		default:
-			if n == 0 || n > e.table.inserted-e.known {
+			if n == 0 {
+				err = qpackProblemOf("zero_increment", errQPACKWire)
+			} else if n > e.table.inserted-e.known {
 				err = errQPACKWire
 			} else {
 				e.known += n
