@@ -2,6 +2,7 @@ package quic
 
 import (
 	"fmt"
+	"github.com/igor-lemon/utls/behavior"
 	"time"
 
 	"github.com/igor-lemon/quic-go-utls/internal/protocol"
@@ -11,6 +12,7 @@ import (
 // Clone clones a Config.
 func (c *Config) Clone() *Config {
 	copy := *c
+	copy.Behavior = c.Behavior.Clone()
 	return &copy
 }
 
@@ -107,6 +109,7 @@ func populateConfig(config *Config) *Config {
 
 	return &Config{
 		ChromeBehavior:                   config.ChromeBehavior,
+		Behavior:                         config.Behavior.Clone(),
 		GetConfigForClient:               config.GetConfigForClient,
 		Versions:                         versions,
 		HandshakeIdleTimeout:             handshakeIdleTimeout,
@@ -127,4 +130,11 @@ func populateConfig(config *Config) *Config {
 		Allow0RTT:                        config.Allow0RTT,
 		Tracer:                           config.Tracer,
 	}
+}
+
+func (c *Config) Policy() behavior.Policy {
+	if c == nil {
+		return nil
+	}
+	return behavior.Resolve(c.Behavior, c.ChromeBehavior)
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/igor-lemon/utls/behavior"
 	"io"
 	"net"
 	"strconv"
@@ -22,9 +23,10 @@ import (
 	"github.com/igor-lemon/quic-go-utls/qlogwriter"
 )
 
-const bodyCopyBufferSize = 8 * 1024
+var bodyCopyBufferSize = behavior.Legacy().Int("h3.body_copy_bytes")
 
 type requestWriter struct {
+	behavior          behavior.Policy
 	mutex             sync.Mutex
 	encoder           *qpack.Encoder
 	headerBuf         *bytes.Buffer
@@ -204,7 +206,11 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 		}
 		if _, ok := headers["priority"]; !ok && w.priorityParam > 0 {
 			// Send standard Chrome priority format if priorityParam is set (RFC 9218).
-			headers["priority"] = []string{"u=0, i"}
+			pol := w.behavior
+			if pol == nil {
+				pol = behavior.Legacy()
+			}
+			headers["priority"] = []string{pol.Text("h3.priority_value")}
 		}
 		if _, ok := headers["trailer"]; !ok && trailers != "" {
 			headers["trailer"] = []string{trailers}

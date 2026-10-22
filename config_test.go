@@ -2,6 +2,7 @@ package quic
 
 import (
 	"context"
+	"github.com/igor-lemon/utls/behavior"
 	"reflect"
 	"testing"
 	"time"
@@ -88,6 +89,8 @@ func configWithNonZeroNonFunctionFields(t *testing.T) *Config {
 		switch fn := typ.Field(i).Name; fn {
 		case "GetConfigForClient", "RequireAddressValidation", "GetLogWriter", "AllowConnectionWindowIncrease", "Tracer":
 			// Can't compare functions.
+		case "Behavior":
+			f.Set(reflect.ValueOf(behavior.Legacy()))
 		case "Versions":
 			f.Set(reflect.ValueOf([]Version{1, 2, 3}))
 		case "ConnectionIDLength":
@@ -196,4 +199,14 @@ func TestConfigZeroLimits(t *testing.T) {
 	c := populateConfig(config)
 	require.Zero(t, c.MaxIncomingStreams)
 	require.Zero(t, c.MaxIncomingUniStreams)
+}
+
+func TestProfileBehaviorConfigOwnership(t *testing.T) {
+	c := &Config{Behavior: behavior.Legacy()}
+	clone := c.Clone()
+	clone.Behavior["quic.versions"][1] = '2'
+	require.EqualValues(t, []uint64{1}, c.Behavior.Numbers("quic.versions"))
+	populated := populateConfig(c)
+	populated.Behavior["quic.versions"][1] = '2'
+	require.EqualValues(t, []uint64{1}, c.Behavior.Numbers("quic.versions"))
 }

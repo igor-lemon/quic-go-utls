@@ -315,10 +315,13 @@ func (h *cryptoSetup) NextEvent() Event {
 }
 
 func (h *cryptoSetup) handleTransportParameters(data []byte) error {
-	tp := wire.TransportParameters{ChromeBehavior: h.perspective == protocol.PerspectiveClient && h.tlsConf != nil && h.tlsConf.ChromeBehavior}
+	tp := wire.TransportParameters{}
+	if h.perspective == protocol.PerspectiveClient {
+		tp.Behavior = h.tlsConf.Policy()
+	}
 	if err := tp.Unmarshal(data, h.perspective.Opposite()); err != nil {
-		if tp.ChromeBehavior && tp.VersionInformationPresent {
-			return &qerr.TransportError{ErrorCode: qerr.ProtocolViolation, ErrorMessage: err.Error()}
+		if tp.Behavior.Has("quic.version_parse_error") && tp.VersionInformationPresent {
+			return &qerr.TransportError{ErrorCode: qerr.TransportErrorCode(tp.Behavior.Uint("quic.version_parse_error")), ErrorMessage: err.Error()}
 		}
 		return err
 	}
