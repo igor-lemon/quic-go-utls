@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/igor-lemon/utls/behavior"
 	"io"
 	"log/slog"
 	"net"
@@ -63,6 +64,7 @@ func (r *roundTripperWithCount) Close() error {
 
 // Transport implements the http.RoundTripper interface
 type Transport struct {
+	Behavior behavior.Policy
 	// TLSClientConfig specifies the TLS configuration to use with
 	// tls.Client. If nil, the default configuration is used.
 	TLSClientConfig *tls.Config
@@ -161,6 +163,7 @@ func (t *Transport) init() error {
 				t.MaxResponseHeaderBytes,
 				t.DisableCompression,
 				t.Logger,
+				t.Behavior.Clone(),
 			)
 		}
 	}
@@ -507,6 +510,7 @@ func (t *Transport) NewClientConn(conn *quic.Conn) *ClientConn {
 		t.MaxResponseHeaderBytes,
 		t.DisableCompression,
 		t.Logger,
+		t.Behavior.Clone(),
 	)
 }
 

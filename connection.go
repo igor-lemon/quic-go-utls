@@ -482,18 +482,29 @@ var newClientConnection = func(
 	} else {
 		params.MaxDatagramFrameSize = protocol.InvalidByteCount
 	}
-	if conf.ChromeBehavior {
-		params.ChromeBehavior = true
-		// This policy offers only v1 as a compatible first flight. Do not list
-		// v2 just because the generic backend also implements it.
-		params.VersionInformation = &wire.VersionInformation{ChosenVersion: v, AvailableVersions: protocol.GetGreasedVersions([]protocol.Version{v})}
-		params.MaxAckDelay = protocol.DefaultMaxAckDelay
-		params.ActiveConnectionIDLimit = protocol.DefaultActiveConnectionIDLimit
-		params.MaxUDPPayloadSize = protocol.MaxReceivePacketBufferSize
-		if conf.EnableDatagrams {
-			params.MaxDatagramFrameSize = 65536
+	if pol := conf.Policy(); pol != nil {
+		params.Behavior = pol
+		if pol.Flag("quic.version_information") {
+			available := []protocol.Version{v}
+			if pol.Flag("quic.grease_version") {
+				available = protocol.GetGreasedVersions(available)
+			}
+			params.VersionInformation = &wire.VersionInformation{ChosenVersion: v, AvailableVersions: available}
+		}
+		if pol.Has("quic.max_ack_delay_ms") {
+			params.MaxAckDelay = time.Duration(pol.Uint("quic.max_ack_delay_ms")) * time.Millisecond
+		}
+		if pol.Has("quic.active_cid_limit") {
+			params.ActiveConnectionIDLimit = pol.Uint("quic.active_cid_limit")
+		}
+		if pol.Has("quic.max_udp_payload") {
+			params.MaxUDPPayloadSize = protocol.ByteCount(pol.Uint("quic.max_udp_payload"))
+		}
+		if conf.EnableDatagrams && pol.Has("quic.max_datagram_frame") {
+			params.MaxDatagramFrameSize = protocol.ByteCount(pol.Uint("quic.max_datagram_frame"))
 		}
 	}
+
 	if s.qlogger != nil {
 		s.qlogTransportParameters(params, protocol.PerspectiveClient, false)
 	}
@@ -571,10 +582,14 @@ func (c *Conn) preSetup() {
 	c.creationTime = now
 
 	c.receivedPacketHandler = *ackhandler.NewReceivedPacketHandler(c.logger)
-	if c.perspective == protocol.PerspectiveClient && c.config.ChromeBehavior {
-		c.connIDManager.maxActiveConnectionIDs = protocol.DefaultActiveConnectionIDLimit
-		// Keep one timer-granularity margin inside the advertised default25ms.
-		c.receivedPacketHandler.SetMaxAckDelay(protocol.DefaultMaxAckDelay - protocol.TimerGranularity)
+	if c.perspective == protocol.PerspectiveClient {
+		pol := c.config.Policy()
+		if pol.Has("quic.active_cid_limit") {
+			c.connIDManager.maxActiveConnectionIDs = pol.Int("quic.active_cid_limit")
+		}
+		if pol.Has("quic.ack_timer_ms") {
+			c.receivedPacketHandler.SetMaxAckDelay(time.Duration(pol.Uint("quic.ack_timer_ms")) * time.Millisecond)
+		}
 	}
 
 	c.datagramQueue = newDatagramQueue(c.scheduleSending, c.logger)
@@ -1606,7 +1621,7 @@ func (c *Conn) handleVersionNegotiationPacket(p receivedPacket) error {
 		return nil
 	}
 
-	if c.config.ChromeBehavior && (!bytes.Equal(src, c.origDestConnID.Bytes()) || dest.Len() != 0 || c.receivedRetry) {
+	if (c.config.Policy().Flag("quic.ignore_vn_wrong_cids") && (!bytes.Equal(src, c.origDestConnID.Bytes()) || dest.Len() != 0)) || (c.config.Policy().Flag("quic.ignore_vn_after_retry") && c.receivedRetry) {
 		return nil
 	}
 	if slices.Contains(supportedVersions, c.version) {
@@ -2156,8 +2171,8 @@ func (c *Conn) handleAckFrame(frame *wire.AckFrame, encLevel protocol.Encryption
 
 func (c *Conn) handleDatagramFrame(f *wire.DatagramFrame) error {
 	limit := wire.MaxDatagramSize
-	if c.perspective == protocol.PerspectiveClient && c.config.ChromeBehavior {
-		limit = 65536
+	if c.perspective == protocol.PerspectiveClient && c.config.Policy().Has("quic.max_datagram_frame") {
+		limit = protocol.ByteCount(c.config.Policy().Uint("quic.max_datagram_frame"))
 	}
 	if f.Length(c.version) > limit {
 		return &qerr.TransportError{
@@ -2420,14 +2435,14 @@ func (c *Conn) checkTransportParameters(params *wire.TransportParameters) error 
 
 	if info := params.VersionInformation; info != nil && info.ChosenVersion != c.version {
 		code := qerr.VersionNegotiationErrorCode
-		if c.perspective == protocol.PerspectiveClient && c.config != nil && c.config.ChromeBehavior {
-			code = qerr.ProtocolViolation
+		if c.perspective == protocol.PerspectiveClient && c.config.Policy().Has("quic.version_mismatch_error") {
+			code = qerr.TransportErrorCode(c.config.Policy().Uint("quic.version_mismatch_error"))
 		}
 		return &qerr.TransportError{ErrorCode: code, ErrorMessage: "version_information chosen version differs from packet version"}
 	}
 	// Chrome's client policy is v1-only. No other version (including a
 	// reserved probe) may be selected, and no cross-version fallback is offered.
-	if c.perspective == protocol.PerspectiveClient && c.config != nil && c.config.ChromeBehavior && params.VersionInformation != nil && params.VersionInformation.ChosenVersion != protocol.Version1 {
+	if c.perspective == protocol.PerspectiveClient && c.config.Policy().Flag("quic.enabled") && params.VersionInformation != nil && params.VersionInformation.ChosenVersion != protocol.Version1 {
 		return &qerr.TransportError{ErrorCode: qerr.ProtocolViolation, ErrorMessage: "server selected an unoffered compatible version"}
 	}
 	// check the initial_source_connection_id

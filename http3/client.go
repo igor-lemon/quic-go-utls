@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/igor-lemon/utls/behavior"
 	"io"
 	"log/slog"
 	"maps"
@@ -50,7 +51,8 @@ var defaultQuicConfig = &quic.Config{
 
 // ClientConn is an HTTP/3 client doing requests to a single remote server.
 type ClientConn struct {
-	conn *Conn
+	behavior behavior.Policy
+	conn     *Conn
 
 	// Enable support for HTTP/3 datagrams (RFC 9297).
 	// If a QUICConfig is set, datagram support also needs to be enabled on the QUIC layer by setting enableDatagrams.
@@ -106,8 +108,14 @@ func newClientConn(
 	maxResponseHeaderBytes int,
 	disableCompression bool,
 	logger *slog.Logger,
+	policies ...behavior.Policy,
 ) *ClientConn {
+	pol := behavior.Legacy()
+	if len(policies) > 0 && policies[0] != nil {
+		pol = policies[0]
+	}
 	c := &ClientConn{
+		behavior:                pol,
 		enableDatagrams:         enableDatagrams,
 		additionalSettings:      additionalSettings,
 		additionalSettingsOrder: additionalSettingsOrder,
@@ -129,6 +137,7 @@ func newClientConn(
 	}
 	c.decoder = qpack.NewDecoder()
 	c.requestWriter = newRequestWriterWithPseudoHeaderOrder(c.pseudoHeaderOrder, c.priorityParam)
+	c.requestWriter.behavior = pol
 	c.conn = newConnection(
 		conn.Context(),
 		conn,
@@ -195,14 +204,14 @@ func (c *ClientConn) setupConn() error {
 		if c.logger != nil {
 			c.logger.Debug("Sending PRIORITY_UPDATE frame", "priorityParam", c.priorityParam)
 		}
-		b = appendPriorityUpdateFrame(b, c.priorityParam)
+		b = appendPriorityUpdateFramePolicy(b, c.priorityParam, c.behavior.Text("h3.priority_value"))
 	} else if c.logger != nil {
 		c.logger.Debug("NOT sending PRIORITY_UPDATE frame", "priorityParam", c.priorityParam)
 	}
 
 	// Send GREASE frames if enabled (Chrome behavior)
 	if c.sendGreaseFrames {
-		b = appendGreaseFrame(b)
+		b = appendGreaseFramePolicy(b, c.behavior)
 	}
 
 	_, err = str.Write(b)
@@ -212,10 +221,11 @@ func (c *ClientConn) setupConn() error {
 // appendGreaseFrame appends a GREASE frame to the buffer.
 // GREASE frames help maintain protocol extensibility by sending unknown frame types.
 // Chrome sends GREASE frames on the control stream after SETTINGS.
-func appendGreaseFrame(b []byte) []byte {
+func appendGreaseFrame(b []byte) []byte { return appendGreaseFramePolicy(b, behavior.Legacy()) }
+func appendGreaseFramePolicy(b []byte, pol behavior.Policy) []byte {
 	// Generate GREASE frame type: 0x1f * N + 0x21
 	// Chrome uses large N values (1-10 billion range)
-	greaseFrameType := generateGREASEFrameType()
+	greaseFrameType := generateGREASEFrameTypePolicy(pol)
 
 	// Append frame type
 	b = quicvarint.Append(b, greaseFrameType)
@@ -228,20 +238,24 @@ func appendGreaseFrame(b []byte) []byte {
 
 // generateGREASEFrameType generates a GREASE frame type.
 // GREASE frame types are of the form 0x1f * N + 0x21 where N is a large random number.
-func generateGREASEFrameType() uint64 {
-	// Chrome uses N in range 1-10 billion
-	// This produces frame types like 31000000033, 62000000033, etc.
-	var draw [4]byte
+func generateGREASEFrameType() uint64 { return generateGREASEFrameTypePolicy(behavior.Legacy()) }
+func generateGREASEFrameTypePolicy(pol behavior.Policy) uint64 {
+	var draw [8]byte
 	if _, err := cryptorand.Read(draw[:]); err != nil {
 		panic(err)
 	}
-	return 0x1f*uint64(binary.BigEndian.Uint32(draw[:])) + 0x21
+	bits := pol.Uint("h3.grease_frame_n_bits")
+	n := binary.BigEndian.Uint64(draw[:]) & ((uint64(1) << bits) - 1)
+	return 31*n + 33
 }
 
 // appendPriorityUpdateFrame appends a PRIORITY_UPDATE frame to the buffer.
 // Chrome sends priority information on the control stream.
 // Frame type 0xF0800 (984832) with priority "u=0, i" for request streams.
 func appendPriorityUpdateFrame(b []byte, priorityParam uint32) []byte {
+	return appendPriorityUpdateFramePolicy(b, priorityParam, behavior.Legacy().Text("h3.priority_value"))
+}
+func appendPriorityUpdateFramePolicy(b []byte, priorityParam uint32, value string) []byte {
 	// Frame type: 0xF0800 (984832) for Chrome
 	frameType := uint64(priorityParam)
 
@@ -253,7 +267,7 @@ func appendPriorityUpdateFrame(b []byte, priorityParam uint32) []byte {
 	priorityPayload = quicvarint.Append(priorityPayload, 0)
 
 	// Priority Field Value: "u=0, i" as ASCII bytes
-	priorityPayload = append(priorityPayload, []byte("u=0, i")...)
+	priorityPayload = append(priorityPayload, []byte(value)...)
 
 	// Append frame type
 	b = quicvarint.Append(b, frameType)
@@ -420,7 +434,7 @@ func (r *cancelingReader) Read(b []byte) (int, error) {
 
 func (c *ClientConn) sendRequestBody(str *RequestStream, body io.ReadCloser, contentLength int64) error {
 	defer body.Close()
-	buf := make([]byte, bodyCopyBufferSize)
+	buf := make([]byte, c.behavior.Int("h3.body_copy_bytes"))
 	sr := &cancelingReader{str: str, r: body}
 	if contentLength == -1 {
 		_, err := io.CopyBuffer(str, sr, buf)

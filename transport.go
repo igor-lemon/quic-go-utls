@@ -285,8 +285,8 @@ func (t *Transport) doDial(
 		return nil, err
 	}
 	var destConnID protocol.ConnectionID
-	if config.ChromeBehavior {
-		destConnID, err = protocol.GenerateConnectionID(8)
+	if config.Policy().Has("quic.initial_dcid_bytes") {
+		destConnID, err = protocol.GenerateConnectionID(config.Policy().Int("quic.initial_dcid_bytes"))
 	} else {
 		destConnID, err = generateConnectionIDForInitial()
 	}

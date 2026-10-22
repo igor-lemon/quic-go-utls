@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/igor-lemon/utls/behavior"
 	"io"
 	"math"
 	"math/big"
@@ -74,7 +75,8 @@ type TransportParameters struct {
 	// VersionInformationPresent records a locally parsed parameter,even on failure.
 	VersionInformationPresent bool
 	// ChromeBehavior is a local serialization policy, never parsed from a peer.
-	ChromeBehavior                 bool
+	ChromeBehavior                 bool // Deprecated backend compatibility.
+	Behavior                       behavior.Policy
 	InitialMaxStreamDataBidiLocal  protocol.ByteCount
 	InitialMaxStreamDataBidiRemote protocol.ByteCount
 	InitialMaxStreamDataUni        protocol.ByteCount
@@ -234,7 +236,7 @@ func (p *TransportParameters) unmarshal(b []byte, sentBy protocol.Perspective, f
 			}
 			for i := 4; i < int(paramLen); i += 4 {
 				v := protocol.Version(binary.BigEndian.Uint32(b[i : i+4]))
-				if v == 0 && !(p.ChromeBehavior && sentBy == protocol.PerspectiveServer) {
+				if v == 0 && !(p.policy().Flag("quic.accept_zero_available_version") && sentBy == protocol.PerspectiveServer) {
 					return errors.New("zero available version")
 				}
 				info.AvailableVersions = append(info.AvailableVersions, v)
@@ -400,9 +402,8 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 	random := make([]byte, 26)
 	rand.Read(random)
 	id := 27 + 31*uint64(random[0])
-	if p.ChromeBehavior && pers == protocol.PerspectiveClient {
-		// QUICHE uses the full62-bit reserved family, not an8-bit subset.
-		x := binary.BigEndian.Uint64(random[18:26]) % ((uint64(1) << 62) - 31)
+	if bits := p.policy().Uint("quic.grease_parameter_id_bits"); bits > 8 && pers == protocol.PerspectiveClient {
+		x := binary.BigEndian.Uint64(random[18:26]) % ((uint64(1) << bits) - 31)
 		id = x/31*31 + 27
 	}
 	b = quicvarint.Append(b, id)
@@ -520,7 +521,7 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 		}
 	}
 
-	if p.ChromeBehavior && pers == protocol.PerspectiveClient {
+	if p.policy().Flag("quic.shuffle_parameters") && pers == protocol.PerspectiveClient {
 		b = shuffleTransportParameters(b)
 	}
 	return b
@@ -668,4 +669,8 @@ func (p *TransportParameters) String() string {
 	}
 	logString += "}"
 	return fmt.Sprintf(logString, logParams...)
+}
+
+func (p *TransportParameters) policy() behavior.Policy {
+	return behavior.Resolve(p.Behavior, p.ChromeBehavior)
 }
