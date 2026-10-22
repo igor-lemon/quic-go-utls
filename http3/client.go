@@ -2,6 +2,8 @@ package http3
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -229,8 +231,11 @@ func appendGreaseFrame(b []byte) []byte {
 func generateGREASEFrameType() uint64 {
 	// Chrome uses N in range 1-10 billion
 	// This produces frame types like 31000000033, 62000000033, etc.
-	n := uint64(1000000000)
-	return 0x1f*n + 0x21
+	var draw [4]byte
+	if _, err := cryptorand.Read(draw[:]); err != nil {
+		panic(err)
+	}
+	return 0x1f*uint64(binary.BigEndian.Uint32(draw[:])) + 0x21
 }
 
 // appendPriorityUpdateFrame appends a PRIORITY_UPDATE frame to the buffer.

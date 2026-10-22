@@ -168,7 +168,13 @@ func (s *initialCryptoStream) Write(p []byte) (int, error) {
 		}
 		slices.SortFunc(s.cuts[:], func(a, b clientHelloCut) int {
 			if a.start == protocol.InvalidByteCount {
+				if b.start == protocol.InvalidByteCount {
+					return 0
+				}
 				return 1
+			}
+			if b.start == protocol.InvalidByteCount {
+				return -1
 			}
 			if a.start > b.start {
 				return 1
