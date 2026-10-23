@@ -34,6 +34,7 @@ type requestWriter struct {
 	headerBuf         *bytes.Buffer
 	pseudoHeaderOrder []string
 	priorityParam     uint32
+	beforeHeaders     func(*http.Request, quic.StreamID) error
 }
 
 func newRequestWriter() *requestWriter {
@@ -64,6 +65,11 @@ func newRequestWriterWithPseudoHeaderOrder(pseudoHeaderOrder []string, priorityP
 }
 
 func (w *requestWriter) WriteRequestHeader(wr io.Writer, req *http.Request, gzip bool, streamID quic.StreamID, qlogger qlogwriter.Recorder) error {
+	if w.beforeHeaders != nil {
+		if err := w.beforeHeaders(req, streamID); err != nil {
+			return err
+		}
+	}
 	// TODO: figure out how to add support for trailers
 	buf := &bytes.Buffer{}
 	if err := w.writeHeaders(buf, req, gzip, streamID, qlogger); err != nil {
