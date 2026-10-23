@@ -16,11 +16,14 @@ import (
 // lock is held while waiting for QUIC flow control. Queue exhaustion terminates
 // the connection instead of dropping a mandatory instruction or deadlocking.
 type qpackInstructionWriter struct {
-	conn   *Conn
-	kind   uint64
-	queue  chan []byte
-	start  sync.Once
-	policy behavior.Policy
+	conn             *Conn
+	kind             uint64
+	queue            chan []byte
+	start            sync.Once
+	policy           behavior.Policy
+	reserved         *quic.SendStream
+	reservationReady <-chan struct{}
+	reservationError error
 }
 
 func newQPACKInstructionWriter(c *Conn, kind uint64, pol behavior.Policy) *qpackInstructionWriter {
@@ -34,7 +37,21 @@ func (w *qpackInstructionWriter) open() (*quic.SendStream, error) {
 	return str, err
 }
 func (w *qpackInstructionWriter) run() {
-	str, err := w.open()
+	var str *quic.SendStream
+	var err error
+	if w.reservationReady != nil {
+		select {
+		case <-w.reservationReady:
+		case <-w.conn.Context().Done():
+			return
+		}
+		str, err = w.reserved, w.reservationError
+		if err == nil {
+			_, err = str.Write(quicvarint.Append(nil, w.kind))
+		}
+	} else {
+		str, err = w.open()
+	}
 	if err != nil {
 		w.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeClosedCriticalStream), qpackReason(w.policy, "h3.qpack.error_stream_unavailable_reason", err, 0))
 		return
@@ -81,10 +98,18 @@ type qpackSession struct {
 	closeFrame                   uint64
 	closeReason                  string
 	policy                       behavior.Policy
+	reservationReady             chan struct{}
+	reserveOnce                  sync.Once
+	reservationError             error
 }
 
 func newQPACKSession(c *Conn, settings map[uint64]uint64, pol behavior.Policy) *qpackSession {
 	s := &qpackSession{conn: c, encoderWriter: newQPACKInstructionWriter(c, 2, pol), decoderWriter: newQPACKInstructionWriter(c, 3, pol), policy: pol}
+	if pol.Text("h3.qpack.streams") == "deferred" {
+		s.reservationReady = make(chan struct{})
+		s.encoderWriter.reservationReady = s.reservationReady
+		s.decoderWriter.reservationReady = s.reservationReady
+	}
 	s.order = pol.Numbers("h3.qpack.stream_order")
 	s.closeSpace = pol.Text("h3.qpack.critical_close_space")
 	s.closeCode = uint64(pol.Int("h3.qpack.critical_close_code"))
@@ -182,4 +207,29 @@ func (s *qpackSession) startEager() error {
 		}
 	}
 	return nil
+}
+
+// startDeferred reserves stream identities in profile order without exposing
+// either stream on the wire. The first instruction starts its writer and emits
+// its type prefix. Feedback can queue during reservation without a table lock
+// waiting for QUIC flow control; the writer alone waits for reservationReady.
+func (s *qpackSession) startDeferred() error {
+	s.reserveOnce.Do(func() {
+		defer close(s.reservationReady)
+		for _, kind := range s.order {
+			w := s.encoderWriter
+			if kind == 3 {
+				w = s.decoderWriter
+			}
+			str, err := s.conn.OpenUniStreamSync(s.conn.Context())
+			if err != nil {
+				s.reservationError = err
+				s.encoderWriter.reservationError = err
+				s.decoderWriter.reservationError = err
+				return
+			}
+			w.reserved = str
+		}
+	})
+	return s.reservationError
 }

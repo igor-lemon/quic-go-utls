@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/textproto"
+	"strings"
 	"time"
 
 	http "github.com/igor-lemon/fhttp"
@@ -58,6 +59,8 @@ type ClientConn struct {
 	// This is a protocol ordering barrier, independent of browser policy.
 	setupComplete chan struct{}
 	setupErr      error
+	controlStream *quic.SendStream
+	controlWrite  chan struct{}
 
 	// Enable support for HTTP/3 datagrams (RFC 9297).
 	// If a QUICConfig is set, datagram support also needs to be enabled on the QUIC layer by setting enableDatagrams.
@@ -122,6 +125,7 @@ func newClientConn(
 	c := &ClientConn{
 		behavior:                pol,
 		setupComplete:           make(chan struct{}),
+		controlWrite:            make(chan struct{}, 1),
 		enableDatagrams:         enableDatagrams,
 		additionalSettings:      additionalSettings,
 		additionalSettingsOrder: additionalSettingsOrder,
@@ -144,6 +148,7 @@ func newClientConn(
 	c.decoder = qpack.NewDecoder()
 	c.requestWriter = newRequestWriterWithPseudoHeaderOrder(c.pseudoHeaderOrder, c.priorityParam)
 	c.requestWriter.behavior = pol
+	c.requestWriter.beforeHeaders = c.sendRequestPriority
 	c.conn = newConnection(
 		conn.Context(),
 		conn,
@@ -232,26 +237,30 @@ func (c *ClientConn) setupConn() error {
 		})
 	}
 
-	// Send PRIORITY_UPDATE frame if priorityParam is set (Chrome behavior)
-	// Chrome sends priority information on the control stream
-	// Must be sent BEFORE GREASE frames
-	if c.priorityParam > 0 {
-		if c.logger != nil {
-			c.logger.Debug("Sending PRIORITY_UPDATE frame", "priorityParam", c.priorityParam)
+	// SETTINGS was already encoded first. Every following initial frame and
+	// its order is selected by the explicit policy, not a browser-name branch.
+	for _, component := range c.behavior.Strings("h3.control_order")[1:] {
+		switch component {
+		case "priority":
+			if c.priorityParam > 0 && c.behavior.Text("h3.priority_updates") == "initial" {
+				b = appendPriorityUpdateFrameForStream(b, c.priorityParam, 0, c.behavior.Text("h3.priority_value"))
+			}
+		case "grease":
+			if c.sendGreaseFrames {
+				b = appendGreaseFramePolicy(b, c.behavior)
+			}
 		}
-		b = appendPriorityUpdateFramePolicy(b, c.priorityParam, c.behavior.Text("h3.priority_value"))
-	} else if c.logger != nil {
-		c.logger.Debug("NOT sending PRIORITY_UPDATE frame", "priorityParam", c.priorityParam)
 	}
-
-	// Send GREASE frames if enabled (Chrome behavior)
-	if c.sendGreaseFrames {
-		b = appendGreaseFramePolicy(b, c.behavior)
-	}
+	c.controlStream = str
 
 	_, err = str.Write(b)
-	if err == nil && c.behavior.Text("h3.qpack.streams") == "eager" {
-		err = c.conn.qpack.startEager()
+	if err == nil {
+		switch c.behavior.Text("h3.qpack.streams") {
+		case "eager":
+			err = c.conn.qpack.startEager()
+		case "deferred":
+			err = c.conn.qpack.startDeferred()
+		}
 	}
 	return err
 }
@@ -261,15 +270,19 @@ func (c *ClientConn) setupConn() error {
 // Chrome sends GREASE frames on the control stream after SETTINGS.
 func appendGreaseFrame(b []byte) []byte { return appendGreaseFramePolicy(b, behavior.Legacy()) }
 func appendGreaseFramePolicy(b []byte, pol behavior.Policy) []byte {
-	// Generate GREASE frame type: 0x1f * N + 0x21
-	// Chrome uses large N values (1-10 billion range)
-	greaseFrameType := generateGREASEFrameTypePolicy(pol)
-
-	// Append frame type
-	b = quicvarint.Append(b, greaseFrameType)
-
-	// Append frame length (0 for empty payload, which is common)
-	b = quicvarint.Append(b, 0)
+	frameType := generateGREASEFrameTypePolicy(pol)
+	lengths := pol.Numbers("h3.grease_payload_lengths")
+	// The selector deliberately retains the relationship with the frame's N.
+	// Independently drawing a legal length would lose this observable relation.
+	n := (frameType - 33) / 31
+	length := lengths[n%uint64(len(lengths))]
+	b = quicvarint.Append(b, frameType)
+	b = quicvarint.Append(b, length)
+	start := len(b)
+	b = append(b, make([]byte, int(length))...)
+	if _, err := cryptorand.Read(b[start:]); err != nil {
+		panic(err)
+	}
 
 	return b
 }
@@ -289,22 +302,24 @@ func generateGREASEFrameTypePolicy(pol behavior.Policy) uint64 {
 
 // appendPriorityUpdateFrame appends a PRIORITY_UPDATE frame to the buffer.
 // Chrome sends priority information on the control stream.
-// Frame type 0xF0800 (984832) with priority "u=0, i" for request streams.
+// Frame type and field value are supplied by the profile.
 func appendPriorityUpdateFrame(b []byte, priorityParam uint32) []byte {
 	return appendPriorityUpdateFramePolicy(b, priorityParam, behavior.Legacy().Text("h3.priority_value"))
 }
 func appendPriorityUpdateFramePolicy(b []byte, priorityParam uint32, value string) []byte {
-	// Frame type: 0xF0800 (984832) for Chrome
+	return appendPriorityUpdateFrameForStream(b, priorityParam, 0, value)
+}
+func appendPriorityUpdateFrameForStream(b []byte, priorityParam uint32, streamID quic.StreamID, value string) []byte {
+	// The configured request PRIORITY_UPDATE frame type.
 	frameType := uint64(priorityParam)
 
 	// Build payload: prioritized_stream_id + priority_field_value
 	priorityPayload := make([]byte, 0, 16)
 
-	// Prioritized Element ID: first client-initiated bidirectional stream is always 0
-	// (subsequent streams: 4, 8, 12, ...)
-	priorityPayload = quicvarint.Append(priorityPayload, 0)
+	// The live request stream, including later requests on the same connection.
+	priorityPayload = quicvarint.Append(priorityPayload, uint64(streamID))
 
-	// Priority Field Value: "u=0, i" as ASCII bytes
+	// The current priority field value.
 	priorityPayload = append(priorityPayload, []byte(value)...)
 
 	// Append frame type
@@ -572,3 +587,60 @@ func (c *ClientConn) doRequest(req *http.Request, str *RequestStream) (*http.Res
 func (c *ClientConn) Conn() *Conn {
 	return c.conn
 }
+
+// sendRequestPriority runs outside the QPACK/header locks, on both RoundTrip
+// and OpenRequestStream/SendRequestHeader. A canceled caller never closes the
+// connection's critical stream. At most one bounded frame write is in flight;
+// flow control cannot create an unbounded writer queue or block a table lock.
+func (c *ClientConn) sendRequestPriority(req *http.Request, streamID quic.StreamID) error {
+	if c.priorityParam == 0 || c.behavior.Text("h3.priority_updates") != "per-request" {
+		return nil
+	}
+	value := c.behavior.Text("h3.priority_value")
+	if c.behavior.Text("h3.priority_source") == "header" {
+		for name, values := range req.Header {
+			if strings.EqualFold(name, "priority") && len(values) > 0 {
+				value = strings.Join(values, ", ")
+				break
+			}
+		}
+	}
+	if strings.ContainsAny(value, "\r\n\x00") || len(value) > c.maxPriorityBytes() {
+		return errors.New("http3: invalid priority field")
+	}
+	if err := req.Context().Err(); err != nil {
+		return err
+	}
+	select {
+	case c.controlWrite <- struct{}{}:
+	case <-req.Context().Done():
+		return req.Context().Err()
+	case <-c.conn.Context().Done():
+		return context.Cause(c.conn.Context())
+	}
+	if err := req.Context().Err(); err != nil {
+		<-c.controlWrite
+		return err
+	}
+	b := appendPriorityUpdateFrameForStream(nil, c.priorityParam, streamID, value)
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.controlStream.Write(b)
+		if err != nil {
+			c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeInternalError), "")
+		}
+		<-c.controlWrite
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-req.Context().Done():
+		return req.Context().Err()
+	case <-c.conn.Context().Done():
+		return context.Cause(c.conn.Context())
+	}
+}
+
+// This is an engine resource ceiling, not an emulated browser preference.
+func (c *ClientConn) maxPriorityBytes() int { return 16 << 10 }
