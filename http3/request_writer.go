@@ -221,7 +221,7 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 
 		// Add all automatically generated fields before sorting.
 		delete(headers, "content-length")
-		if shouldSendReqContentLength(req.Method, contentLength) {
+		if w.behavior.SendContentLength(req.Method, contentLength, req.Body != nil, false) {
 			headers["content-length"] = []string{strconv.FormatInt(contentLength, 10)}
 		}
 		if _, ok := headers["accept-encoding"]; !ok && addGzipHeader {
@@ -362,33 +362,11 @@ func validPseudoPath(v string) bool {
 // req.ContentLength, where 0 actually means zero (not unknown) and -1
 // means unknown.
 func actualContentLength(req *http.Request) int64 {
-	if req.Body == nil {
+	if req.Body == nil || req.Body == http.NoBody {
 		return 0
 	}
 	if req.ContentLength != 0 {
 		return req.ContentLength
 	}
 	return -1
-}
-
-// shouldSendReqContentLength reports whether the http2.Transport should send
-// a "content-length" request header. This logic is basically a copy of the net/http
-// transferWriter.shouldSendContentLength.
-// The contentLength is the corrected contentLength (so 0 means actually 0, not unknown).
-// -1 means unknown.
-func shouldSendReqContentLength(method string, contentLength int64) bool {
-	if contentLength > 0 {
-		return true
-	}
-	if contentLength < 0 {
-		return false
-	}
-	// For zero bodies, whether we send a content-length depends on the method.
-	// It also kinda doesn't matter for http2 either way, with END_STREAM.
-	switch method {
-	case "POST", "PUT", "PATCH":
-		return true
-	default:
-		return false
-	}
 }
