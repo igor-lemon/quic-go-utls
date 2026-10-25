@@ -55,3 +55,10 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   `HeaderFor` gives for `h3` (fhttp's `ProtocolHTTP3`). Tests
   `verify_handshake_test.go`, `http3/alps_test.go`,
   `http3/qpack_dynamic_test.go`.
+- A request given only cached connections (`RoundTripOpt.OnlyCachedConn`)
+  is not sent again after an error of the protocol (`h3.retry_attempts`,
+  2026-10-25, `doRoundTripOpt`): its client was let go of, and the replay
+  could only say `ErrNoCachedConn`, hiding the error its caller (tls-client's
+  DNS path, which sends it over TCP) acts on. A request refused unprocessed
+  is still tried again, and says there is no connection. Test
+  `TestARequestOnlyACachedConnectionMayTakeIsNotSentAgainAfterAnErrorOfTheProtocol`.

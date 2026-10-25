@@ -36,6 +36,10 @@ type Settings struct {
 type RoundTripOpt struct {
 	// OnlyCachedConn controls whether the Transport may create a new QUIC connection.
 	// If set true and no cached connection is available, RoundTripOpt will return ErrNoCachedConn.
+	// Such a request is not sent again after an error of the protocol
+	// (h3.retry_attempts): its connection is let go of then, and the one a
+	// replay would need is one the Transport may not make, so the error is
+	// its caller's to act on.
 	OnlyCachedConn bool
 }
 
@@ -357,7 +361,7 @@ func (t *Transport) doRoundTripOpt(req *http.Request, opt RoundTripOpt, attempt 
 		if attempt < t.Behavior.Int("h3.retry_unprocessed_attempts")-1 {
 			retryReq, retryErr = canRetryRequest(err, req)
 		}
-		if retryErr != nil && attempt < t.Behavior.Int("h3.retry_attempts")-1 && t.retryProtocolError(err, req) {
+		if retryErr != nil && !opt.OnlyCachedConn && attempt < t.Behavior.Int("h3.retry_attempts")-1 && t.retryProtocolError(err, req) {
 			retryReq, retryErr = replayH3Request(req)
 		}
 		req, err = retryReq, retryErr
