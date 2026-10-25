@@ -54,6 +54,16 @@ type roundTripperWithCount struct {
 	useCount atomic.Int64
 }
 
+// gone says whether r's connection was made and has gone away since.
+func (r *roundTripperWithCount) gone() bool {
+	select {
+	case <-r.dialing:
+		return r.dialErr == nil && r.conn.Context().Err() != nil
+	default:
+		return false
+	}
+}
+
 func (r *roundTripperWithCount) Close() error {
 	r.cancel()
 	<-r.dialing
@@ -217,7 +227,7 @@ func (t *Transport) Preconnect(ctx context.Context, addr string) error {
 		return context.Cause(ctx)
 	}
 	if cl.dialErr != nil {
-		t.removeClient(addr)
+		t.removeClient(addr, cl)
 		return cl.dialErr
 	}
 	select {
@@ -320,7 +330,7 @@ func (t *Transport) doRoundTripOpt(req *http.Request, opt RoundTripOpt, attempt 
 	}
 
 	if cl.dialErr != nil {
-		t.removeClient(hostname)
+		t.removeClient(hostname, cl)
 		return nil, cl.dialErr
 	}
 	defer cl.useCount.Add(-1)
@@ -333,7 +343,7 @@ func (t *Transport) doRoundTripOpt(req *http.Request, opt RoundTripOpt, attempt 
 			return nil, err
 		default:
 		}
-		t.removeClient(hostname)
+		t.removeClient(hostname, cl)
 		retryReq, retryErr := (*http.Request)(nil), err
 		if attempt < t.Behavior.Int("h3.retry_unprocessed_attempts")-1 {
 			retryReq, retryErr = canRetryRequest(err, req)
@@ -447,6 +457,13 @@ func (t *Transport) getClient(ctx context.Context, hostname string, onlyCached b
 	}
 
 	cl, ok := t.clients[hostname]
+	if ok && cl.gone() {
+		// A connection that went away, idle past its timeout or closed by
+		// the server, takes no request, as Chromium's pool forgets a QUIC
+		// session once it closes: the next is dialed anew.
+		delete(t.clients, hostname)
+		ok = false
+	}
 	if !ok {
 		if onlyCached {
 			return nil, false, ErrNoCachedConn
@@ -556,13 +573,15 @@ func (t *Transport) resolveUDPAddr(ctx context.Context, network, addr string) (*
 	return &net.UDPAddr{IP: ip.IP, Port: port, Zone: ip.Zone}, nil
 }
 
-func (t *Transport) removeClient(hostname string) {
+// removeClient forgets cl, the client of hostname a request failed on, unless
+// another has taken its place since: a connection dialed anew after it went
+// away is not forgotten for the failure of a request on the one before.
+func (t *Transport) removeClient(hostname string, cl *roundTripperWithCount) {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
-	if t.clients == nil {
-		return
+	if t.clients[hostname] == cl {
+		delete(t.clients, hostname)
 	}
-	delete(t.clients, hostname)
 }
 
 // NewClientConn creates a new HTTP/3 client connection on top of a QUIC connection.
