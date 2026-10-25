@@ -27,7 +27,24 @@ type RTTStats struct {
 	meanDeviation atomic.Int64 // nanoseconds
 
 	maxAckDelay atomic.Int64 // nanoseconds
+
+	pto PTOPolicy
 }
+
+// PTOPolicy is how a profile works out a probe timeout (quiche's
+// GetProbeTimeoutDelay): before an RTT sample, NoSampleMultiplier times
+// InitialRTT and at least NoSampleMin; after one, the smoothed RTT and
+// RTTVarMultiplier times the mean deviation. The zero value is quic-go's:
+// twice DefaultInitialRTT, and four times the deviation.
+type PTOPolicy struct {
+	InitialRTT         time.Duration
+	NoSampleMultiplier int
+	NoSampleMin        time.Duration
+	RTTVarMultiplier   int
+}
+
+// SetPTOPolicy has PTO work out a probe timeout as p says.
+func (r *RTTStats) SetPTOPolicy(p PTOPolicy) { r.pto = p }
 
 func NewRTTStats() *RTTStats {
 	var rttStats RTTStats
@@ -68,9 +85,16 @@ func (r *RTTStats) MaxAckDelay() time.Duration {
 // PTO gets the probe timeout duration.
 func (r *RTTStats) PTO(includeMaxAckDelay bool) time.Duration {
 	if !r.hasMeasurement {
+		if r.pto.NoSampleMultiplier > 0 {
+			return max(time.Duration(r.pto.NoSampleMultiplier)*r.pto.InitialRTT, r.pto.NoSampleMin)
+		}
 		return 2 * DefaultInitialRTT
 	}
-	pto := r.SmoothedRTT() + max(4*r.MeanDeviation(), protocol.TimerGranularity)
+	deviation := 4 * r.MeanDeviation()
+	if r.pto.RTTVarMultiplier > 0 {
+		deviation = time.Duration(r.pto.RTTVarMultiplier) * r.MeanDeviation()
+	}
+	pto := r.SmoothedRTT() + max(deviation, protocol.TimerGranularity)
 	if includeMaxAckDelay {
 		pto += r.MaxAckDelay()
 	}
@@ -155,5 +179,6 @@ func (r *RTTStats) Clone() *RTTStats {
 	out.smoothedRTT.Store(r.smoothedRTT.Load())
 	out.meanDeviation.Store(r.meanDeviation.Load())
 	out.maxAckDelay.Store(r.maxAckDelay.Load())
+	out.pto = r.pto
 	return out
 }

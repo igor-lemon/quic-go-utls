@@ -328,3 +328,26 @@ func TestDynamicQPACKModuloUsesPeerMaximumNotLocalBudget(t *testing.T) {
 		feedback = nil
 	}
 }
+
+func TestATableALPSGaveIsWrittenIntoFromTheFirstSection(t *testing.T) {
+	// as Chrome's first request, its server's control stream 300 ms late
+	// (bench h3alps, qpack-late): the capacity ALPS gave set, and inserted
+	// into, though the warmup holds back the control stream's
+	var wire bytes.Buffer
+	e := newDynamicQPACKEncoder("insert", "shorter", "shorter", nil, func(b []byte) error { wire.Write(b); return nil })
+	e.budget = 4096
+	e.warmup = 1
+	e.configureEarly(4096, 100)
+	fields := []qpack.HeaderField{{Name: "x-proof", Value: "some-repeated-value"}}
+	first, err := e.encode(0, fields)
+	if err != nil || first[0] == 0 || wire.Len() == 0 {
+		t.Fatalf("the first section wrote %x, the encoder stream %x: %v", first, wire.Bytes(), err)
+	}
+	if e.maximum != 4096 || e.blockedLimit != 100 || !e.early {
+		t.Errorf("configured %d/%d early %v", e.maximum, e.blockedLimit, e.early)
+	}
+	d := newDynamicQPACKDecoder(4096, 100, nil)
+	if err := dynamicInstructions(d, wire.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+}

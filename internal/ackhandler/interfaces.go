@@ -31,6 +31,12 @@ type SentPacketHandler interface {
 	ECNMode(isShortHeaderPacket bool) protocol.ECN // isShortHeaderPacket should only be true for non-coalesced 1-RTT packets
 	PeekPacketNumber(protocol.EncryptionLevel) (protocol.PacketNumber, protocol.PacketNumberLen)
 	PopPacketNumber(protocol.EncryptionLevel) protocol.PacketNumber
+	// PlanPacket says a packet of that many bytes goes in the datagram being
+	// packed, before its padding; KeysInstalled says keys of a level came.
+	PlanPacket(protocol.EncryptionLevel, protocol.ByteCount)
+	KeysInstalled(protocol.EncryptionLevel)
+	SetSendPolicy(SendPolicy)
+	PTOCount() uint32
 
 	GetLossDetectionTimeout() monotime.Time
 	OnLossDetectionTimeout(now monotime.Time) error

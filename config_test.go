@@ -87,7 +87,7 @@ func configWithNonZeroNonFunctionFields(t *testing.T) *Config {
 		}
 
 		switch fn := typ.Field(i).Name; fn {
-		case "GetConfigForClient", "RequireAddressValidation", "GetLogWriter", "AllowConnectionWindowIncrease", "Tracer":
+		case "GetConfigForClient", "RequireAddressValidation", "GetLogWriter", "AllowConnectionWindowIncrease", "Tracer", "VerifyHandshake":
 			// Can't compare functions.
 		case "Behavior":
 			f.Set(reflect.ValueOf(behavior.Legacy()))
@@ -148,8 +148,11 @@ func TestConfigClone(t *testing.T) {
 				calledTracer = true
 				return nil
 			},
+			VerifyHandshake: func(ConnectionState) error { return assert.AnError },
 		}
+		require.ErrorIs(t, populateConfig(c1).VerifyHandshake(ConnectionState{}), assert.AnError)
 		c2 := c1.Clone()
+		require.ErrorIs(t, c2.VerifyHandshake(ConnectionState{}), assert.AnError)
 		c2.AllowConnectionWindowIncrease(nil, 1234)
 		require.True(t, calledAllowConnectionWindowIncrease)
 		_, err := c2.GetConfigForClient(&ClientInfo{})

@@ -159,6 +159,12 @@ func newClientConn(
 	)
 	c.conn.qpack = newQPACKSession(c.conn, additionalSettings, pol)
 	c.requestWriter.dynamic = c.conn.qpack.encoder
+	if pol.Text("h3.peer_settings") == "quiche" {
+		encoder := c.conn.qpack.encoder
+		// taken before the first request is written (roundTrip), or as the
+		// control stream's SETTINGS come (handleControlStream)
+		c.conn.alps = newALPSState(pol, encoder.configureEarly)
+	}
 	// send the SETTINGs frame, using 0-RTT data, if possible
 	go func() {
 		c.setupErr = c.setupConn()
@@ -397,6 +403,10 @@ func (c *ClientConn) roundTrip(req *http.Request) (*http.Response, error) {
 		case <-c.conn.HandshakeComplete():
 		case <-req.Context().Done():
 			return nil, req.Context().Err()
+		}
+		if c.conn.alps != nil {
+			// ALPS's settings before the request is written
+			c.conn.alps.take(c.conn.ConnectionState())
 		}
 	}
 

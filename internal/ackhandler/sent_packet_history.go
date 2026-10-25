@@ -19,6 +19,10 @@ type sentPacketHistory struct {
 
 	firstPacketNumber   protocol.PacketNumber
 	highestPacketNumber protocol.PacketNumber
+
+	// sharedCounter: the numbers come from a counter of every space, so
+	// those between two of this space's went to the others.
+	sharedCounter bool
 }
 
 func newSentPacketHistory(isAppData bool) *sentPacketHistory {
@@ -37,8 +41,13 @@ func newSentPacketHistory(isAppData bool) *sentPacketHistory {
 
 func (h *sentPacketHistory) checkSequentialPacketNumberUse(pn protocol.PacketNumber) {
 	if h.highestPacketNumber != protocol.InvalidPacketNumber {
-		if pn != h.highestPacketNumber+1 {
+		if pn != h.highestPacketNumber+1 && (!h.sharedCounter || pn <= h.highestPacketNumber) {
 			panic("non-sequential packet number use")
+		}
+		// the numbers the other spaces took keep their places, as numbers
+		// none of this space's packets has
+		for gap := h.highestPacketNumber + 1; gap < pn && len(h.packets) > 0; gap++ {
+			h.packets = append(h.packets, nil)
 		}
 	}
 	h.highestPacketNumber = pn

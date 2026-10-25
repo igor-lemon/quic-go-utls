@@ -104,6 +104,17 @@ type sentPacketHandler struct {
 	enableECN  bool
 	ecnTracker ecnHandler
 
+	// policy is how packets are numbered and probes sent; with shared
+	// numbers, shared is the one counter, pnLen the length of the next
+	// number by the window rule, and planned and plannedBytes the packets
+	// planned in the datagram being packed.
+	policy          SendPolicy
+	shared          *sequentialPacketNumberGenerator
+	pnLen           protocol.PacketNumberLen
+	planned         int
+	plannedBytes    protocol.ByteCount
+	maxDatagramSize protocol.ByteCount
+
 	perspective protocol.Perspective
 
 	qlogger     qlogwriter.Recorder
@@ -150,6 +161,7 @@ func NewSentPacketHandler(
 		perspective:                    pers,
 		qlogger:                        qlogger,
 		logger:                         logger,
+		maxDatagramSize:                initialMaxDatagramSize,
 	}
 	if enableECN {
 		h.enableECN = true
@@ -734,7 +746,7 @@ func (h *sentPacketHandler) lossDetectionTime(now monotime.Time) alarmTimer {
 	lossTime, encLevel := h.getLossTimeAndSpace()
 	if !lossTime.IsZero() && (pathProbeLossTime.IsZero() || lossTime.Before(pathProbeLossTime)) {
 		return alarmTimer{
-			Time:            lossTime,
+			Time:            lossTime.Add(h.policy.AlarmSlack),
 			TimerType:       qlog.TimerTypeACK,
 			EncryptionLevel: encLevel,
 		}
@@ -742,7 +754,7 @@ func (h *sentPacketHandler) lossDetectionTime(now monotime.Time) alarmTimer {
 	ptoTime, encLevel := h.getPTOTimeAndSpace(now)
 	if !ptoTime.IsZero() && (pathProbeLossTime.IsZero() || ptoTime.Before(pathProbeLossTime)) {
 		return alarmTimer{
-			Time:            ptoTime,
+			Time:            ptoTime.Add(h.policy.AlarmSlack),
 			TimerType:       qlog.TimerTypePTO,
 			EncryptionLevel: encLevel,
 		}
@@ -891,8 +903,10 @@ func (h *sentPacketHandler) OnLossDetectionTimeout(now monotime.Time) error {
 		h.numProbesToSend++
 		if h.initialPackets != nil {
 			h.ptoMode = SendPTOInitial
+			h.skipForProbe(protocol.EncryptionInitial)
 		} else if h.handshakePackets != nil {
 			h.ptoMode = SendPTOHandshake
+			h.skipForProbe(protocol.EncryptionHandshake)
 		} else {
 			return errors.New("sentPacketHandler BUG: PTO fired, but bytes_in_flight is 0 and Initial and Handshake already dropped")
 		}
@@ -919,7 +933,7 @@ func (h *sentPacketHandler) OnLossDetectionTimeout(now monotime.Time) error {
 		})
 		h.qlogger.RecordEvent(qlog.PTOCountUpdated{PTOCount: h.ptoCount})
 	}
-	h.numProbesToSend += 2
+	h.numProbesToSend += h.probes()
 	//nolint:exhaustive // We never arm a PTO timer for 0-RTT packets.
 	switch encLevel {
 	case protocol.EncryptionInitial:
@@ -927,15 +941,18 @@ func (h *sentPacketHandler) OnLossDetectionTimeout(now monotime.Time) error {
 	case protocol.EncryptionHandshake:
 		h.ptoMode = SendPTOHandshake
 	case protocol.Encryption1RTT:
-		// skip a packet number in order to elicit an immediate ACK
-		pn := h.PopPacketNumber(protocol.Encryption1RTT)
-		h.getPacketNumberSpace(protocol.Encryption1RTT).history.SkippedPacket(pn)
 		h.ptoMode = SendPTOAppData
 	default:
 		return fmt.Errorf("PTO timer in unexpected encryption level: %s", encLevel)
 	}
+	// skip a packet number in order to elicit an immediate ACK
+	h.skipForProbe(encLevel)
 	return nil
 }
+
+// PTOCount is the number of probe timeouts since the peer last
+// acknowledged a packet.
+func (h *sentPacketHandler) PTOCount() uint32 { return h.ptoCount }
 
 func (h *sentPacketHandler) GetLossDetectionTimeout() monotime.Time {
 	return h.alarm.Time
@@ -954,11 +971,28 @@ func (h *sentPacketHandler) ECNMode(isShortHeaderPacket bool) protocol.ECN {
 func (h *sentPacketHandler) PeekPacketNumber(encLevel protocol.EncryptionLevel) (protocol.PacketNumber, protocol.PacketNumberLen) {
 	pnSpace := h.getPacketNumberSpace(encLevel)
 	pn := pnSpace.pns.Peek()
+	if h.shared != nil {
+		// the packets planned in this datagram take the numbers before
+		pn += protocol.PacketNumber(h.planned)
+		if h.policy.WindowPacketNumberLength {
+			return pn, h.pnLen
+		}
+	}
 	// See section 17.1 of RFC 9000.
 	return pn, protocol.PacketNumberLengthForHeader(pn, pnSpace.largestAcked)
 }
 
 func (h *sentPacketHandler) PopPacketNumber(encLevel protocol.EncryptionLevel) protocol.PacketNumber {
+	if h.shared != nil {
+		_, pn := h.shared.Pop()
+		if h.planned > 0 {
+			h.planned--
+		}
+		if h.planned == 0 {
+			h.plannedBytes = 0
+		}
+		return pn
+	}
 	pnSpace := h.getPacketNumberSpace(encLevel)
 	skipped, pn := pnSpace.pns.Pop()
 	if skipped {
@@ -1022,6 +1056,7 @@ func (h *sentPacketHandler) TimeUntilSend() monotime.Time {
 
 func (h *sentPacketHandler) SetMaxDatagramSize(s protocol.ByteCount) {
 	h.congestion.SetMaxDatagramSize(s)
+	h.maxDatagramSize = s
 }
 
 func (h *sentPacketHandler) isAmplificationLimited() bool {
@@ -1096,6 +1131,12 @@ func (h *sentPacketHandler) ResetForRetry(now monotime.Time) {
 	}
 	h.initialPackets = newPacketNumberSpace(h.initialPackets.pns.Peek(), false)
 	h.appDataPackets = newPacketNumberSpace(h.appDataPackets.pns.Peek(), true)
+	if h.shared != nil {
+		for _, s := range []*packetNumberSpace{h.initialPackets, h.appDataPackets} {
+			s.pns = h.shared
+			s.history.sharedCounter = true
+		}
+	}
 	oldAlarm := h.alarm
 	h.alarm = alarmTimer{}
 	if h.qlogger != nil {

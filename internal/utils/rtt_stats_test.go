@@ -144,3 +144,44 @@ func TestRTTStatsResetForPathMigration(t *testing.T) {
 	require.Equal(t, 10*time.Millisecond, rttStats.SmoothedRTT())
 	require.Equal(t, 10*time.Millisecond, rttStats.LatestRTT())
 }
+
+func TestAProbeTimeoutIsWorkedOutAsAProfileSays(t *testing.T) {
+	// Chrome 155's (quiche's GetProbeTimeoutDelay): three times its 100 ms
+	// before a sample, 10 ms at least; then twice the deviation
+	chrome := PTOPolicy{InitialRTT: 100 * time.Millisecond, NoSampleMultiplier: 3, NoSampleMin: 10 * time.Millisecond, RTTVarMultiplier: 2}
+	rttStats := NewRTTStats()
+	rttStats.SetPTOPolicy(chrome)
+	require.Equal(t, 300*time.Millisecond, rttStats.PTO(false))
+	require.Equal(t, 300*time.Millisecond, rttStats.PTO(true))
+	short := chrome
+	short.InitialRTT = time.Millisecond
+	floored := NewRTTStats()
+	floored.SetPTOPolicy(short)
+	require.Equal(t, 10*time.Millisecond, floored.PTO(false))
+	rttStats.SetMaxAckDelay(25 * time.Millisecond)
+	rttStats.UpdateRTT(40*time.Millisecond, 0)
+	require.Equal(t, 40*time.Millisecond+2*20*time.Millisecond, rttStats.PTO(false))
+	require.Equal(t, 40*time.Millisecond+2*20*time.Millisecond+25*time.Millisecond, rttStats.PTO(true))
+	// the deviation never under the timer's granularity
+	steady := NewRTTStats()
+	steady.SetPTOPolicy(chrome)
+	for range 50 {
+		steady.UpdateRTT(10*time.Millisecond, 0)
+	}
+	require.Equal(t, 10*time.Millisecond+protocol.TimerGranularity, steady.PTO(false))
+	// a clone works it out alike, and so does a migrated path
+	require.Equal(t, rttStats.PTO(true), rttStats.Clone().PTO(true))
+	rttStats.ResetForPathMigration()
+	require.Equal(t, 300*time.Millisecond, rttStats.PTO(false))
+	// quic-go's: twice 100 ms, then four times the deviation
+	own := NewRTTStats()
+	require.Equal(t, 200*time.Millisecond, own.PTO(false))
+	own.UpdateRTT(40*time.Millisecond, 0)
+	require.Equal(t, 40*time.Millisecond+4*20*time.Millisecond, own.PTO(false))
+}
+
+func TestAProbeTimeoutOfOneInitialRTTIsAProfiles(t *testing.T) {
+	r := NewRTTStats()
+	r.SetPTOPolicy(PTOPolicy{InitialRTT: 50 * time.Millisecond, NoSampleMultiplier: 1})
+	require.Equal(t, 50*time.Millisecond, r.PTO(false))
+}

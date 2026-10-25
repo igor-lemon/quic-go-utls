@@ -155,6 +155,42 @@ func (c *MockSentPacketHandlerGetLossDetectionTimeoutCall) DoAndReturn(f func() 
 	return c
 }
 
+// KeysInstalled mocks base method.
+func (m *MockSentPacketHandler) KeysInstalled(arg0 protocol.EncryptionLevel) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "KeysInstalled", arg0)
+}
+
+// KeysInstalled indicates an expected call of KeysInstalled.
+func (mr *MockSentPacketHandlerMockRecorder) KeysInstalled(arg0 any) *MockSentPacketHandlerKeysInstalledCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "KeysInstalled", reflect.TypeOf((*MockSentPacketHandler)(nil).KeysInstalled), arg0)
+	return &MockSentPacketHandlerKeysInstalledCall{Call: call}
+}
+
+// MockSentPacketHandlerKeysInstalledCall wrap *gomock.Call
+type MockSentPacketHandlerKeysInstalledCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockSentPacketHandlerKeysInstalledCall) Return() *MockSentPacketHandlerKeysInstalledCall {
+	c.Call = c.Call.Return()
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockSentPacketHandlerKeysInstalledCall) Do(f func(protocol.EncryptionLevel)) *MockSentPacketHandlerKeysInstalledCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockSentPacketHandlerKeysInstalledCall) DoAndReturn(f func(protocol.EncryptionLevel)) *MockSentPacketHandlerKeysInstalledCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // MigratedPath mocks base method.
 func (m *MockSentPacketHandler) MigratedPath(now monotime.Time, initialMaxPacketSize protocol.ByteCount) {
 	m.ctrl.T.Helper()
@@ -229,6 +265,44 @@ func (c *MockSentPacketHandlerOnLossDetectionTimeoutCall) DoAndReturn(f func(mon
 	return c
 }
 
+// PTOCount mocks base method.
+func (m *MockSentPacketHandler) PTOCount() uint32 {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PTOCount")
+	ret0, _ := ret[0].(uint32)
+	return ret0
+}
+
+// PTOCount indicates an expected call of PTOCount.
+func (mr *MockSentPacketHandlerMockRecorder) PTOCount() *MockSentPacketHandlerPTOCountCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PTOCount", reflect.TypeOf((*MockSentPacketHandler)(nil).PTOCount))
+	return &MockSentPacketHandlerPTOCountCall{Call: call}
+}
+
+// MockSentPacketHandlerPTOCountCall wrap *gomock.Call
+type MockSentPacketHandlerPTOCountCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockSentPacketHandlerPTOCountCall) Return(arg0 uint32) *MockSentPacketHandlerPTOCountCall {
+	c.Call = c.Call.Return(arg0)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockSentPacketHandlerPTOCountCall) Do(f func() uint32) *MockSentPacketHandlerPTOCountCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockSentPacketHandlerPTOCountCall) DoAndReturn(f func() uint32) *MockSentPacketHandlerPTOCountCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // PeekPacketNumber mocks base method.
 func (m *MockSentPacketHandler) PeekPacketNumber(arg0 protocol.EncryptionLevel) (protocol.PacketNumber, protocol.PacketNumberLen) {
 	m.ctrl.T.Helper()
@@ -264,6 +338,42 @@ func (c *MockSentPacketHandlerPeekPacketNumberCall) Do(f func(protocol.Encryptio
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
 func (c *MockSentPacketHandlerPeekPacketNumberCall) DoAndReturn(f func(protocol.EncryptionLevel) (protocol.PacketNumber, protocol.PacketNumberLen)) *MockSentPacketHandlerPeekPacketNumberCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// PlanPacket mocks base method.
+func (m *MockSentPacketHandler) PlanPacket(arg0 protocol.EncryptionLevel, arg1 protocol.ByteCount) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "PlanPacket", arg0, arg1)
+}
+
+// PlanPacket indicates an expected call of PlanPacket.
+func (mr *MockSentPacketHandlerMockRecorder) PlanPacket(arg0, arg1 any) *MockSentPacketHandlerPlanPacketCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PlanPacket", reflect.TypeOf((*MockSentPacketHandler)(nil).PlanPacket), arg0, arg1)
+	return &MockSentPacketHandlerPlanPacketCall{Call: call}
+}
+
+// MockSentPacketHandlerPlanPacketCall wrap *gomock.Call
+type MockSentPacketHandlerPlanPacketCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockSentPacketHandlerPlanPacketCall) Return() *MockSentPacketHandlerPlanPacketCall {
+	c.Call = c.Call.Return()
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockSentPacketHandlerPlanPacketCall) Do(f func(protocol.EncryptionLevel, protocol.ByteCount)) *MockSentPacketHandlerPlanPacketCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockSentPacketHandlerPlanPacketCall) DoAndReturn(f func(protocol.EncryptionLevel, protocol.ByteCount)) *MockSentPacketHandlerPlanPacketCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
@@ -597,6 +707,42 @@ func (c *MockSentPacketHandlerSetMaxDatagramSizeCall) Do(f func(protocol.ByteCou
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
 func (c *MockSentPacketHandlerSetMaxDatagramSizeCall) DoAndReturn(f func(protocol.ByteCount)) *MockSentPacketHandlerSetMaxDatagramSizeCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// SetSendPolicy mocks base method.
+func (m *MockSentPacketHandler) SetSendPolicy(arg0 ackhandler.SendPolicy) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetSendPolicy", arg0)
+}
+
+// SetSendPolicy indicates an expected call of SetSendPolicy.
+func (mr *MockSentPacketHandlerMockRecorder) SetSendPolicy(arg0 any) *MockSentPacketHandlerSetSendPolicyCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetSendPolicy", reflect.TypeOf((*MockSentPacketHandler)(nil).SetSendPolicy), arg0)
+	return &MockSentPacketHandlerSetSendPolicyCall{Call: call}
+}
+
+// MockSentPacketHandlerSetSendPolicyCall wrap *gomock.Call
+type MockSentPacketHandlerSetSendPolicyCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockSentPacketHandlerSetSendPolicyCall) Return() *MockSentPacketHandlerSetSendPolicyCall {
+	c.Call = c.Call.Return()
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockSentPacketHandlerSetSendPolicyCall) Do(f func(ackhandler.SendPolicy)) *MockSentPacketHandlerSetSendPolicyCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockSentPacketHandlerSetSendPolicyCall) DoAndReturn(f func(ackhandler.SendPolicy)) *MockSentPacketHandlerSetSendPolicyCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

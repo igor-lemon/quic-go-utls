@@ -50,6 +50,10 @@ type frameParser struct {
 	streamID            quic.StreamID
 	closeConn           func(quic.ApplicationErrorCode, string) error
 	unknownFrameHandler unknownFrameHandlerFunc
+	// booleansAsSaid has a SETTINGS frame keep SETTINGS_ENABLE_CONNECT_PROTOCOL
+	// and SETTINGS_H3_DATAGRAM as they are said, for the server's settings to
+	// be taken as a profile says (peerSettings), not refused here
+	booleansAsSaid bool
 }
 
 func (p *frameParser) ParseNext(qlogger qlogwriter.Recorder) (frame, error) {
@@ -103,7 +107,7 @@ func (p *frameParser) ParseNext(qlogger qlogwriter.Recorder) (frame, error) {
 				headerLen: r.NumRead,
 			}, nil
 		case 0x4: // SETTINGS
-			return parseSettingsFrame(r, l, p.streamID, qlogger)
+			return parseSettingsFrame(r, l, p.streamID, qlogger, p.booleansAsSaid)
 		case 0x3: // unsupported: CANCEL_PUSH
 			if qlogger != nil {
 				qlogger.RecordEvent(qlog.FrameParsed{
@@ -190,17 +194,21 @@ const (
 type settingsFrame struct {
 	MaxFieldSectionSize int64 // SETTINGS_MAX_FIELD_SECTION_SIZE, -1 if not set
 
-	Datagram        bool              // HTTP Datagrams, RFC 9297
-	ExtendedConnect bool              // Extended CONNECT, RFC 9220
-	Other           map[uint64]uint64 // all settings that we don't explicitly recognize
-	OtherOrder      []uint64          // order in which to write Other settings
+	Datagram        bool // HTTP Datagrams, RFC 9297
+	ExtendedConnect bool // Extended CONNECT, RFC 9220
+	// the values a received frame said them as, kept for a profile that
+	// takes them itself (frameParser.booleansAsSaid); nil otherwise
+	DatagramSaid, ExtendedConnectSaid *uint64
+	Other                             map[uint64]uint64 // all settings that we don't explicitly recognize
+	OtherOrder                        []uint64          // order in which to write Other settings
 }
 
 func pointer[T any](v T) *T {
 	return &v
 }
 
-func parseSettingsFrame(r *countingByteReader, l uint64, streamID quic.StreamID, qlogger qlogwriter.Recorder) (*settingsFrame, error) {
+func parseSettingsFrame(r *countingByteReader, l uint64, streamID quic.StreamID, qlogger qlogwriter.Recorder, booleansAsSaid ...bool) (*settingsFrame, error) {
+	asSaid := len(booleansAsSaid) > 0 && booleansAsSaid[0]
 	if l > 8*(1<<10) {
 		return nil, fmt.Errorf("unexpected size for SETTINGS frame: %d", l)
 	}
@@ -238,7 +246,10 @@ func parseSettingsFrame(r *countingByteReader, l uint64, streamID quic.StreamID,
 				return nil, fmt.Errorf("duplicate setting: %d", id)
 			}
 			readExtendedConnect = true
-			if val != 0 && val != 1 {
+			if asSaid {
+				frame.ExtendedConnectSaid = pointer(val)
+			}
+			if val != 0 && val != 1 && !asSaid {
 				return nil, fmt.Errorf("invalid value for SETTINGS_ENABLE_CONNECT_PROTOCOL: %d", val)
 			}
 			frame.ExtendedConnect = val == 1
@@ -250,7 +261,10 @@ func parseSettingsFrame(r *countingByteReader, l uint64, streamID quic.StreamID,
 				return nil, fmt.Errorf("duplicate setting: %d", id)
 			}
 			readDatagram = true
-			if val != 0 && val != 1 {
+			if asSaid {
+				frame.DatagramSaid = pointer(val)
+			}
+			if val != 0 && val != 1 && !asSaid {
 				return nil, fmt.Errorf("invalid value for SETTINGS_H3_DATAGRAM: %d", val)
 			}
 			frame.Datagram = val == 1

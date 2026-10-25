@@ -61,6 +61,7 @@ type receivedPacket struct {
 type receivedPacketWithDatagramID struct {
 	receivedPacket
 	datagramID qlog.DatagramID
+	packetType qlog.PacketType // of a packet kept until it can be decrypted
 }
 
 func (p *receivedPacket) Size() protocol.ByteCount { return protocol.ByteCount(len(p.data)) }
@@ -191,6 +192,7 @@ type Conn struct {
 
 	undecryptablePackets          []receivedPacketWithDatagramID // undecryptable packets, waiting for a change in encryption level
 	undecryptablePacketsToProcess []receivedPacketWithDatagramID
+	readKeysInstalled             int // the read keys installed so far
 
 	earlyConnReadyChan chan struct{}
 	sentFirstPacket    bool
@@ -455,6 +457,7 @@ var newClientConnection = func(
 		s.qlogger,
 		s.logger,
 	)
+	s.sentPacketHandler.SetSendPolicy(sendPolicyOf(s.config.Policy()))
 	s.currentMTUEstimate.Store(uint32(estimateMaxPayloadSize(protocol.ByteCount(s.config.InitialPacketSize))))
 	oneRTTStream := newCryptoStream()
 	params := &wire.TransportParameters{
@@ -521,7 +524,12 @@ var newClientConnection = func(
 	s.cryptoStreamHandler = cs
 	s.cryptoStreamManager = newCryptoStreamManager(s.initialStream, s.handshakeStream, oneRTTStream)
 	s.unpacker = newPacketUnpacker(cs, s.srcConnIDLen)
-	s.packer = newPacketPacker(srcConnID, s.connIDManager.Get, s.initialStream, s.handshakeStream, s.sentPacketHandler, s.retransmissionQueue, cs, s.framer, &s.receivedPacketHandler, s.datagramQueue, s.perspective)
+	packer := newPacketPacker(srcConnID, s.connIDManager.Get, s.initialStream, s.handshakeStream, s.sentPacketHandler, s.retransmissionQueue, cs, s.framer, &s.receivedPacketHandler, s.datagramQueue, s.perspective)
+	packer.setPolicy(s.config.Policy())
+	if packer.chaos != nil {
+		s.initialStream.setChaos(packer.chaos, &packer.rand)
+	}
+	s.packer = packer
 	if len(tlsConf.ServerName) > 0 {
 		s.tokenStoreKey = tlsConf.ServerName
 	} else {
@@ -590,6 +598,8 @@ func (c *Conn) preSetup() {
 		if pol.Has("quic.ack_timer_ms") {
 			c.receivedPacketHandler.SetMaxAckDelay(time.Duration(pol.Uint("quic.ack_timer_ms")) * time.Millisecond)
 		}
+		c.receivedPacketHandler.SetHandshakeAckDelay(time.Duration(pol.Uint("quic.handshake_ack_timer_ms")) * time.Millisecond)
+		c.rttStats.SetPTOPolicy(ptoPolicyOf(pol))
 	}
 
 	c.datagramQueue = newDatagramQueue(c.scheduleSending, c.logger)
@@ -729,9 +739,9 @@ runLoop:
 			break runLoop
 		} else {
 			idleTimeoutStartTime := c.idleTimeoutStartTime()
-			if (!c.handshakeComplete && now.Sub(idleTimeoutStartTime) >= c.config.HandshakeIdleTimeout) ||
+			if (!c.handshakeComplete && now.Sub(idleTimeoutStartTime) >= c.handshakeIdleTimeout()) ||
 				(c.handshakeComplete && !now.Before(c.nextIdleTimeoutTime())) {
-				c.destroyImpl(qerr.ErrIdleTimeout)
+				c.closeIdle(now.Sub(idleTimeoutStartTime))
 				break runLoop
 			}
 		}
@@ -893,7 +903,7 @@ func (c *Conn) maybeResetTimer() {
 	var deadline monotime.Time
 	if !c.handshakeComplete {
 		deadline = c.creationTime.Add(c.config.handshakeTimeout())
-		if t := c.idleTimeoutStartTime().Add(c.config.HandshakeIdleTimeout); t.Before(deadline) {
+		if t := c.idleTimeoutStartTime().Add(c.handshakeIdleTimeout()); t.Before(deadline) {
 			deadline = t
 		}
 	} else {
@@ -960,6 +970,14 @@ func (c *Conn) switchToNewPath(tr *Transport, now monotime.Time) {
 }
 
 func (c *Conn) handleHandshakeComplete(now monotime.Time) error {
+	if c.perspective == protocol.PerspectiveClient && c.config.VerifyHandshake != nil {
+		if err := c.config.VerifyHandshake(c.ConnectionState()); err != nil {
+			if errors.Is(err, ErrHandshakeAbandoned) {
+				c.destroyImpl(err) // no CONNECTION_CLOSE: the close the error makes below is not taken
+			}
+			return err // a TransportError or ApplicationError as it is, else INTERNAL_ERROR (handleCloseError)
+		}
+	}
 	defer close(c.handshakeCompleteChan)
 	// Once the handshake completes, we have derived 1-RTT keys.
 	// There's no point in queueing undecryptable packets for later decryption anymore.
@@ -2063,6 +2081,13 @@ func (c *Conn) handleHandshakeEvents(now monotime.Time) error {
 			// queue all previously undecryptable packets
 			c.undecryptablePacketsToProcess = append(c.undecryptablePacketsToProcess, c.undecryptablePackets...)
 			c.undecryptablePackets = nil
+			// a client gets the Handshake keys first, then the 1-RTT keys
+			c.readKeysInstalled++
+			level := protocol.EncryptionHandshake
+			if c.readKeysInstalled > 1 {
+				level = protocol.Encryption1RTT
+			}
+			c.sentPacketHandler.KeysInstalled(level)
 		case handshake.EventDiscard0RTTKeys:
 			err = c.dropEncryptionLevel(protocol.Encryption0RTT, now)
 		case handshake.EventWriteInitialData:
@@ -3056,7 +3081,7 @@ func (c *Conn) tryQueueingUndecryptablePacket(p receivedPacket, pt qlog.PacketTy
 			DatagramID: datagramID,
 		})
 	}
-	c.undecryptablePackets = append(c.undecryptablePackets, receivedPacketWithDatagramID{receivedPacket: p, datagramID: datagramID})
+	c.undecryptablePackets = append(c.undecryptablePackets, receivedPacketWithDatagramID{receivedPacket: p, datagramID: datagramID, packetType: pt})
 }
 
 func (c *Conn) queueControlFrame(f wire.Frame) {

@@ -13,6 +13,7 @@ import (
 	"github.com/igor-lemon/quic-go-utls/internal/protocol"
 	"github.com/igor-lemon/quic-go-utls/internal/qerr"
 	"github.com/igor-lemon/quic-go-utls/internal/wire"
+	"github.com/igor-lemon/utls/behavior"
 )
 
 var errNothingToPack = errors.New("nothing to pack")
@@ -97,6 +98,7 @@ func (p *longHeaderPacket) IsAckEliciting() bool { return ackhandler.HasAckElici
 type packetNumberManager interface {
 	PeekPacketNumber(protocol.EncryptionLevel) (protocol.PacketNumber, protocol.PacketNumberLen)
 	PopPacketNumber(protocol.EncryptionLevel) protocol.PacketNumber
+	PlanPacket(protocol.EncryptionLevel, protocol.ByteCount)
 }
 
 type sealingManager interface {
@@ -135,6 +137,35 @@ type packetPacker struct {
 	rand                rand.Rand
 
 	numNonAckElicitingAcks int
+
+	// A client's profile (setPolicy): planPackets tells the packet number
+	// manager of each packet of a datagram before the next is numbered
+	// (quic.packet_numbers shared), padAtEnd writes padding after the
+	// frames (quic.padding_position end), chaos lays out its Initials;
+	// earlyApplication sends an application close as it is in Initial and
+	// Handshake packets too (quic.close_early_application application, as
+	// quiche does), where RFC 9000 makes it APPLICATION_ERROR with no reason.
+	planPackets      bool
+	padAtEnd         bool
+	chaos            *chaosLayout
+	earlyApplication bool
+}
+
+// setPolicy has a client's packer number, pad and lay out its packets as
+// its profile says.
+func (p *packetPacker) setPolicy(pol behavior.Policy) {
+	p.planPackets = pol.Text("quic.packet_numbers") == "shared"
+	p.padAtEnd = pol.Text("quic.padding_position") == "end"
+	p.chaos = chaosOf(pol)
+	p.earlyApplication = pol.Text("quic.close_early_application") == "application"
+}
+
+// plan tells the packet number manager a packet of size bytes before its
+// padding goes in the datagram being packed.
+func (p *packetPacker) plan(encLevel protocol.EncryptionLevel, size protocol.ByteCount) {
+	if p.planPackets {
+		p.pnManager.PlanPacket(encLevel, size)
+	}
 }
 
 var _ packer = &packetPacker{}
@@ -215,7 +246,7 @@ func (p *packetPacker) packConnectionClose(
 			ReasonPhrase:       reason,
 		}
 		// don't send application errors in Initial or Handshake packets
-		if isApplicationError && (encLevel == protocol.EncryptionInitial || encLevel == protocol.EncryptionHandshake) {
+		if isApplicationError && !p.earlyApplication && (encLevel == protocol.EncryptionInitial || encLevel == protocol.EncryptionHandshake) {
 			ccf.IsApplicationError = false
 			ccf.ErrorCode = uint64(qerr.ApplicationErrorErrorCode)
 			ccf.ReasonPhrase = ""
@@ -253,11 +284,17 @@ func (p *packetPacker) packConnectionClose(
 		if encLevel == protocol.Encryption1RTT {
 			connID = p.getDestConnID()
 			oneRTTPacketNumber, oneRTTPacketNumberLen = p.pnManager.PeekPacketNumber(protocol.Encryption1RTT)
-			size += p.shortHeaderPacketLength(connID, oneRTTPacketNumberLen, pl)
+			// its AEAD tag counted, as every other packet's is: the Initial is
+			// padded so that the datagram is maxPacketSize, not a tag more
+			s := p.shortHeaderPacketLength(connID, oneRTTPacketNumberLen, pl) + protocol.ByteCount(sealer.Overhead())
+			size += s
+			p.plan(encLevel, s)
 		} else {
 			hdr = p.getLongHeader(encLevel, v)
 			hdrs[i] = hdr
-			size += p.longHeaderPacketLength(hdr, pl, v) + protocol.ByteCount(sealer.Overhead())
+			s := p.longHeaderPacketLength(hdr, pl, v) + protocol.ByteCount(sealer.Overhead())
+			size += s
+			p.plan(encLevel, s)
 			numLongHdrPackets++
 		}
 		payloads[i] = pl
@@ -354,6 +391,7 @@ func (p *packetPacker) PackCoalescedPacket(onlyAck bool, maxSize protocol.ByteCo
 		)
 		if initialPayload.length > 0 {
 			size += p.longHeaderPacketLength(initialHdr, initialPayload, v) + protocol.ByteCount(initialSealer.Overhead())
+			p.plan(protocol.EncryptionInitial, size)
 		}
 	}
 
@@ -377,6 +415,7 @@ func (p *packetPacker) PackCoalescedPacket(onlyAck bool, maxSize protocol.ByteCo
 			if handshakePayload.length > 0 {
 				s := p.longHeaderPacketLength(handshakeHdr, handshakePayload, v) + protocol.ByteCount(handshakeSealer.Overhead())
 				size += s
+				p.plan(protocol.EncryptionHandshake, s)
 			}
 		}
 	}
@@ -399,7 +438,9 @@ func (p *packetPacker) PackCoalescedPacket(onlyAck bool, maxSize protocol.ByteCo
 			hdrLen := wire.ShortHeaderLen(connID, oneRTTPacketNumberLen)
 			oneRTTPayload = p.maybeGetShortHeaderPacket(oneRTTSealer, hdrLen, maxSize-size, onlyAck, now, v)
 			if oneRTTPayload.length > 0 {
-				size += p.shortHeaderPacketLength(connID, oneRTTPacketNumberLen, oneRTTPayload) + protocol.ByteCount(oneRTTSealer.Overhead())
+				s := p.shortHeaderPacketLength(connID, oneRTTPacketNumberLen, oneRTTPayload) + protocol.ByteCount(oneRTTSealer.Overhead())
+				size += s
+				p.plan(protocol.Encryption1RTT, s)
 			}
 		} else if p.perspective == protocol.PerspectiveClient && !onlyAck { // 0-RTT packets can't contain ACK frames
 			var err error
@@ -410,7 +451,9 @@ func (p *packetPacker) PackCoalescedPacket(onlyAck bool, maxSize protocol.ByteCo
 			if zeroRTTSealer != nil {
 				zeroRTTHdr, zeroRTTPayload = p.maybeGetAppDataPacketFor0RTT(zeroRTTSealer, maxSize-size, now, v)
 				if zeroRTTPayload.length > 0 {
-					size += p.longHeaderPacketLength(zeroRTTHdr, zeroRTTPayload, v) + protocol.ByteCount(zeroRTTSealer.Overhead())
+					s := p.longHeaderPacketLength(zeroRTTHdr, zeroRTTPayload, v) + protocol.ByteCount(zeroRTTSealer.Overhead())
+					size += s
+					p.plan(protocol.Encryption0RTT, s)
 				}
 			}
 		}
@@ -489,6 +532,7 @@ func (p *packetPacker) appendPacket(
 		return shortHeaderPacket{}, errNothingToPack
 	}
 	kp := sealer.KeyPhase()
+	p.plan(protocol.Encryption1RTT, p.shortHeaderPacketLength(connID, pnLen, pl)+protocol.ByteCount(sealer.Overhead()))
 
 	return p.appendShortHeaderPacket(buf, connID, pn, pnLen, kp, pl, 0, maxPacketSize, sealer, false, v)
 }
@@ -756,6 +800,7 @@ func (p *packetPacker) PackPTOProbePacket(
 	if encLevel == protocol.EncryptionInitial {
 		padding = p.initialPaddingLen(pl.frames, size, maxPacketSize)
 	}
+	p.plan(encLevel, size)
 
 	longHdrPacket, err := p.appendLongHeaderPacket(buffer, hdr, pl, padding, encLevel, sealer, v)
 	if err != nil {
@@ -785,6 +830,7 @@ func (p *packetPacker) packPTOProbePacket1RTT(maxPacketSize protocol.ByteCount, 
 	}
 	buffer := getPacketBuffer()
 	packet := &coalescedPacket{buffer: buffer}
+	p.plan(protocol.Encryption1RTT, p.shortHeaderPacketLength(connID, pnLen, pl)+protocol.ByteCount(s.Overhead()))
 	shp, err := p.appendShortHeaderPacket(buffer, connID, pn, pnLen, kp, pl, 0, maxPacketSize, s, false, v)
 	if err != nil {
 		return nil, err
@@ -807,6 +853,7 @@ func (p *packetPacker) PackMTUProbePacket(ping ackhandler.Frame, size protocol.B
 	pn, pnLen := p.pnManager.PeekPacketNumber(protocol.Encryption1RTT)
 	padding := size - p.shortHeaderPacketLength(connID, pnLen, pl) - protocol.ByteCount(s.Overhead())
 	kp := s.KeyPhase()
+	p.plan(protocol.Encryption1RTT, size)
 	packet, err := p.appendShortHeaderPacket(buffer, connID, pn, pnLen, kp, pl, padding, size, s, true, v)
 	return packet, buffer, err
 }
@@ -827,6 +874,7 @@ func (p *packetPacker) PackPathProbePacket(connID protocol.ConnectionID, frames 
 		length: l,
 	}
 	padding := protocol.MinInitialPacketSize - p.shortHeaderPacketLength(connID, pnLen, payload) - protocol.ByteCount(s.Overhead())
+	p.plan(protocol.Encryption1RTT, protocol.MinInitialPacketSize)
 	packet, err := p.appendShortHeaderPacket(buf, connID, pn, pnLen, s.KeyPhase(), payload, padding, protocol.MinInitialPacketSize, s, false, v)
 	if err != nil {
 		return shortHeaderPacket{}, nil, err
@@ -875,9 +923,18 @@ func (p *packetPacker) appendLongHeaderPacket(buffer *packetBuffer, header *wire
 	}
 	payloadOffset := protocol.ByteCount(len(raw))
 
-	raw, err = p.appendPacketPayload(raw, pl, paddingLen, v)
-	if err != nil {
-		return nil, err
+	laidOut := false
+	if encLevel == protocol.EncryptionInitial && p.chaos != nil { // a client's alone (setPolicy)
+		raw, laidOut, err = p.chaos.appendPayload(raw, pl, paddingLen, &p.rand, v)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !laidOut {
+		raw, err = p.appendPacketPayload(raw, pl, paddingLen, v)
+		if err != nil {
+			return nil, err
+		}
 	}
 	raw = p.encryptPacket(raw, sealer, header.PacketNumber, payloadOffset, pnLen)
 	buffer.Data = buffer.Data[:len(buffer.Data)+len(raw)]
@@ -959,7 +1016,7 @@ func (p *packetPacker) appendPacketPayload(raw []byte, pl payload, paddingLen pr
 			return nil, err
 		}
 	}
-	if paddingLen > 0 {
+	if paddingLen > 0 && !p.padAtEnd {
 		raw = append(raw, make([]byte, paddingLen)...)
 	}
 	// Randomize the order of the control frames.
@@ -980,6 +1037,10 @@ func (p *packetPacker) appendPacketPayload(raw []byte, pl payload, paddingLen pr
 		if err != nil {
 			return nil, err
 		}
+	}
+	// quiche pads a packet after its frames (MaybeAddPadding)
+	if paddingLen > 0 && p.padAtEnd {
+		raw = append(raw, make([]byte, paddingLen)...)
 	}
 
 	if payloadSize := protocol.ByteCount(len(raw)-payloadOffset) - paddingLen; payloadSize != pl.length {

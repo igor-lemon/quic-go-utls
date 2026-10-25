@@ -438,15 +438,19 @@ func (d *dynamicQPACKDecoder) decode(ctx context.Context, stream uint64, block [
 // respects the peer blocked-stream budget. Insertion, warmup and base strategy
 // are generic JSON-selected primitives, independent of browser identity.
 type dynamicQPACKEncoder struct {
-	budget              uint64
-	drainingPercent     uint64
-	warmup, sections    uint64
-	baseMode            string
-	blockedLimit        uint64
-	mu                  sync.Mutex
-	table               dynamicTable
-	maximum, known      uint64
-	initialized         bool
+	budget           uint64
+	drainingPercent  uint64
+	warmup, sections uint64
+	baseMode         string
+	blockedLimit     uint64
+	mu               sync.Mutex
+	table            dynamicTable
+	maximum, known   uint64
+	initialized      bool
+	// early is a table ALPS gave, known before the first section: the
+	// warmup's sections are those written before the control stream's
+	// SETTINGS are read, which ALPS's precede (configureEarly)
+	early               bool
 	mode, names, values string
 	excluded            []string
 	outstanding         map[uint64][]qpackOutstanding
@@ -469,6 +473,17 @@ func (e *dynamicQPACKEncoder) configure(max uint64, blocked ...uint64) {
 	e.maximum = max
 	capacity := min(max, e.budget, qpackTableSafetyLimit)
 	e.table.capacity = capacity
+}
+
+// configureEarly is configure with the settings a server gave in ALPS, which
+// the first section is written with, as Chrome's first request is (bench
+// h3alps, qpack-late: its control stream 300 ms late, Chrome's first request
+// sets the capacity ALPS gave and inserts).
+func (e *dynamicQPACKEncoder) configureEarly(max, blocked uint64) {
+	e.configure(max, blocked)
+	e.mu.Lock()
+	e.early = true
+	e.mu.Unlock()
 }
 
 func (e *dynamicQPACKEncoder) evictable(id uint64) bool {
@@ -544,7 +559,7 @@ func (e *dynamicQPACKEncoder) encode(stream uint64, fields []qpack.HeaderField) 
 	var instructions []byte
 	refs := make(map[uint64]bool)
 	var required uint64
-	active := e.mode != "disabled" && e.table.capacity > 0 && e.sections >= e.warmup
+	active := e.mode != "disabled" && e.table.capacity > 0 && (e.sections >= e.warmup || e.early)
 	e.sections++
 	if active && !e.initialized {
 		instructions = appendQPACKInt(instructions, 5, 0x20, e.table.capacity)
