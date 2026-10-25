@@ -32,6 +32,10 @@ func (c *fakeConn) SetWriteDeadline(t time.Time) error { panic("connection opera
 func (c *fakeConn) RemoteAddr() net.Addr               { return c.conn.RemoteAddr() }
 func (c *fakeConn) LocalAddr() net.Addr                { return c.conn.LocalAddr() }
 
+// ConnectionState is the QUIC connection's TLS, as a TCP connection's own
+// says its: what a trace of the request reads off its connection.
+func (c *fakeConn) ConnectionState() tls.ConnectionState { return c.conn.ConnectionState().TLS }
+
 func traceGotConn(trace *httptrace.ClientTrace, conn *quic.Conn, reused bool) {
 	if trace != nil && trace.GotConn != nil {
 		trace.GotConn(httptrace.GotConnInfo{
