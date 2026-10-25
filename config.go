@@ -17,6 +17,11 @@ func (c *Config) Clone() *Config {
 }
 
 func (c *Config) handshakeTimeout() time.Duration {
+	// A profile says how long a handshake may take at most (Chrome's
+	// max_time_before_crypto_handshake).
+	if p := c.Policy(); p.Has("quic.handshake_timeout_ms") {
+		return time.Duration(p.Uint("quic.handshake_timeout_ms")) * time.Millisecond
+	}
 	return 2 * c.HandshakeIdleTimeout
 }
 
@@ -70,6 +75,11 @@ func populateConfig(config *Config) *Config {
 	if config.HandshakeIdleTimeout != 0 {
 		handshakeIdleTimeout = config.HandshakeIdleTimeout
 	}
+	// A profile says how long its handshake may be idle (Chrome's is its
+	// max_idle_time_before_crypto_handshake less quiche's second).
+	if p := config.Policy(); p.Has("quic.handshake_idle_timeout_ms") {
+		handshakeIdleTimeout = time.Duration(p.Uint("quic.handshake_idle_timeout_ms")) * time.Millisecond
+	}
 	idleTimeout := protocol.DefaultIdleTimeout
 	if config.MaxIdleTimeout != 0 {
 		idleTimeout = config.MaxIdleTimeout
@@ -110,6 +120,7 @@ func populateConfig(config *Config) *Config {
 	return &Config{
 		ChromeBehavior:                   config.ChromeBehavior,
 		Behavior:                         config.Behavior.Clone(),
+		VerifyHandshake:                  config.VerifyHandshake,
 		GetConfigForClient:               config.GetConfigForClient,
 		Versions:                         versions,
 		HandshakeIdleTimeout:             handshakeIdleTimeout,

@@ -21,6 +21,7 @@ func traceGetConn(trace *httptrace.ClientTrace, hostPort string) {
 // because the quic connection does not implement net.Conn.
 type fakeConn struct {
 	conn *quic.Conn
+	alps *alpsState
 }
 
 func (c *fakeConn) Close() error                       { panic("connection operation prohibited") }
@@ -36,10 +37,28 @@ func (c *fakeConn) LocalAddr() net.Addr                { return c.conn.LocalAddr
 // says its: what a trace of the request reads off its connection.
 func (c *fakeConn) ConnectionState() tls.ConnectionState { return c.conn.ConnectionState().TLS }
 
-func traceGotConn(trace *httptrace.ClientTrace, conn *quic.Conn, reused bool) {
+// AcceptCH is what the ACCEPT_CH entries of the ALPS the server gave ask
+// origin (as an Origin header writes it) for: the client hints a page's
+// request to it over the connection is to carry, as Chromium's
+// QuicHttpStream::GetAcceptChViaAlps gives them. Nothing before the
+// handshake is done (alpsState.take), or of a connection whose profile
+// reads no ALPS.
+func (c *fakeConn) AcceptCH(origin string) (string, bool) {
+	if c.alps == nil {
+		return "", false
+	}
+	c.alps.take(c.conn.ConnectionState())
+	return c.alps.acceptCHFor(origin)
+}
+
+func traceGotConn(trace *httptrace.ClientTrace, conn *quic.Conn, reused bool, alps ...*alpsState) {
 	if trace != nil && trace.GotConn != nil {
+		fc := &fakeConn{conn: conn}
+		if len(alps) > 0 {
+			fc.alps = alps[0]
+		}
 		trace.GotConn(httptrace.GotConnInfo{
-			Conn:   &fakeConn{conn: conn},
+			Conn:   fc,
 			Reused: reused,
 		})
 	}

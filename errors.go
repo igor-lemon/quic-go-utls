@@ -1,6 +1,7 @@
 package quic
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/igor-lemon/quic-go-utls/internal/qerr"
@@ -24,6 +25,12 @@ type (
 	// HandshakeTimeoutError indicates that the connection timed out before completing the handshake.
 	HandshakeTimeoutError = qerr.HandshakeTimeoutError
 )
+
+// ErrHandshakeAbandoned, from a Config.VerifyHandshake, ends the connection
+// without a word to its peer: no CONNECTION_CLOSE goes, as from a client
+// whose process went away (Chrome 155's network service on an ORIGIN frame
+// in ALPS).
+var ErrHandshakeAbandoned = errors.New("quic: connection abandoned as its handshake ended")
 
 type (
 	// TransportErrorCode is a QUIC transport error code, see section 20 of RFC 9000.

@@ -132,6 +132,13 @@ func isExtendedConnectRequest(req *http.Request) bool {
 //
 // The returned header fields are only set if doQlog is true.
 func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, trailers string, contentLength int64, doQlog bool) ([]qlog.HeaderField, error) {
+	if req.HeaderFor != nil {
+		// the header the request is written with over HTTP/3 (fhttp's
+		// Request.HeaderFor), asked for once its connection is known
+		written := *req
+		written.Header, written.HeaderFor = req.WrittenHeader(http.ProtocolHTTP3), nil
+		req = &written
+	}
 	host := req.Host
 	if host == "" {
 		host = req.URL.Host

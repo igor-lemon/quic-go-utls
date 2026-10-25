@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,6 +53,11 @@ type Conn struct {
 
 	settings         *Settings
 	receivedSettings chan struct{}
+
+	// alps is what a client took of its server's ALPS, whose settings the
+	// control stream's are held to, when its profile takes them as quiche
+	// does (h3.peer_settings); nil otherwise
+	alps *alpsState
 
 	idleTimeout time.Duration
 	idleTimer   *time.Timer
@@ -340,7 +346,7 @@ func (c *Conn) handleUnidirectionalStreams(hijack func(StreamType, quic.Connecti
 }
 
 func (c *Conn) handleControlStream(str *quic.ReceiveStream) {
-	fp := &frameParser{closeConn: c.conn.CloseWithError, r: str, streamID: str.StreamID()}
+	fp := &frameParser{closeConn: c.conn.CloseWithError, r: str, streamID: str.StreamID(), booleansAsSaid: c.alps != nil}
 	f, err := fp.ParseNext(c.qlogger)
 	if err != nil {
 		var serr *quic.StreamError
@@ -361,7 +367,18 @@ func (c *Conn) handleControlStream(str *quic.ReceiveStream) {
 		EnableExtendedConnect: sf.ExtendedConnect,
 		Other:                 sf.Other,
 	}
-	if c.qpack != nil {
+	if c.alps != nil {
+		// after what ALPS gave, which the handshake that let this stream come
+		// has: the settings held to it, then the encoder told what both say
+		c.alps.take(c.conn.ConnectionState())
+		if p := c.alps.peer.control(settingsSaid(sf)); p != nil {
+			c.closeFor(p)
+			return
+		}
+		if c.qpack != nil {
+			c.qpack.encoder.configure(c.alps.peer.capacity, c.alps.peer.blocked)
+		}
+	} else if c.qpack != nil {
 		c.qpack.encoder.configure(sf.Other[1], sf.Other[7])
 	}
 	close(c.receivedSettings)
@@ -491,3 +508,39 @@ func (c *Conn) Settings() *Settings { return c.settings }
 
 // Context returns the context of the underlying QUIC connection.
 func (c *Conn) Context() context.Context { return c.ctx }
+
+// closeFor closes the connection for a problem with what the server said,
+// as the profile says (closeFor in alps.go).
+func (c *Conn) closeFor(p *alpsProblem) {
+	switch e := closeFor(c.alps.policy, p).(type) {
+	case *quic.TransportError:
+		c.conn.CloseWithTransportError(e.ErrorCode, e.FrameType, e.ErrorMessage)
+	case *quic.ApplicationError:
+		c.conn.CloseWithError(e.ErrorCode, e.ErrorMessage)
+	}
+}
+
+// settingsSaid are the settings a received SETTINGS frame said: the field
+// section, the two booleans, then the rest by identifier (the frame keeps
+// no order of its own).
+func settingsSaid(sf *settingsFrame) [][2]uint64 {
+	var said [][2]uint64
+	if sf.MaxFieldSectionSize >= 0 {
+		said = append(said, [2]uint64{settingMaxFieldSectionSize, uint64(sf.MaxFieldSectionSize)})
+	}
+	if sf.ExtendedConnectSaid != nil {
+		said = append(said, [2]uint64{settingExtendedConnect, *sf.ExtendedConnectSaid})
+	}
+	if sf.DatagramSaid != nil {
+		said = append(said, [2]uint64{settingDatagram, *sf.DatagramSaid})
+	}
+	ids := make([]uint64, 0, len(sf.Other))
+	for id := range sf.Other {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		said = append(said, [2]uint64{id, sf.Other[id]})
+	}
+	return said
+}

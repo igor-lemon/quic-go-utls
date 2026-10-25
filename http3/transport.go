@@ -185,6 +185,11 @@ func (t *Transport) init() error {
 		t.QUICConfig = defaultQuicConfig.Clone()
 		t.QUICConfig.EnableDatagrams = t.EnableDatagrams
 	}
+	if t.Behavior.Has("h3.alps_reader") && t.QUICConfig.VerifyHandshake == nil {
+		// what the server gives in ALPS is read as the handshake ends
+		t.QUICConfig = t.QUICConfig.Clone()
+		t.QUICConfig.VerifyHandshake = VerifyALPS(t.Behavior)
+	}
 	if t.EnableDatagrams && !t.QUICConfig.EnableDatagrams {
 		return errors.New("HTTP Datagrams enabled, but QUIC Datagrams disabled")
 	}
@@ -334,7 +339,11 @@ func (t *Transport) doRoundTripOpt(req *http.Request, opt RoundTripOpt, attempt 
 		return nil, cl.dialErr
 	}
 	defer cl.useCount.Add(-1)
-	traceGotConn(trace, cl.conn, isReused)
+	var alps *alpsState
+	if cc, ok := cl.clientConn.(*ClientConn); ok {
+		alps = cc.conn.alps
+	}
+	traceGotConn(trace, cl.conn, isReused, alps)
 	rsp, err := cl.clientConn.RoundTrip(req)
 	if err != nil {
 		// request aborted due to context cancellation

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"slices"
 	"strconv"
@@ -109,6 +110,12 @@ type initialCryptoStream struct {
 	scramble bool
 	end      protocol.ByteCount
 	cuts     [2]clientHelloCut
+
+	// chaos lays out the first flight as quiche does (setChaos), in place of
+	// the scramble; flight is its plan.
+	chaos  *chaosLayout
+	rng    *rand.Rand
+	flight firstFlightPlan
 }
 
 func newInitialCryptoStream(isClient bool) *initialCryptoStream {
@@ -129,6 +136,9 @@ func newInitialCryptoStream(isClient bool) *initialCryptoStream {
 }
 
 func (s *initialCryptoStream) HasData() bool {
+	if s.chaos != nil {
+		return s.chaosHasData()
+	}
 	// The ClientHello might be written in multiple parts.
 	// In order to correctly split the ClientHello, we need the entire ClientHello has been queued.
 	if s.scramble && s.writeOffset == 0 && s.cuts[0].start == protocol.InvalidByteCount {
@@ -186,6 +196,9 @@ func (s *initialCryptoStream) Write(p []byte) (int, error) {
 }
 
 func (s *initialCryptoStream) PopCryptoFrame(maxLen protocol.ByteCount) *wire.CryptoFrame {
+	if s.chaos != nil {
+		return s.chaosPop(maxLen)
+	}
 	if !s.scramble {
 		return s.baseCryptoStream.PopCryptoFrame(maxLen)
 	}

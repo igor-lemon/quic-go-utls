@@ -115,6 +115,12 @@ type Config struct {
 	// zero-length source IDs (the HTTP/3 Chrome dialer supplies one).
 	ChromeBehavior bool // Deprecated: explicit profile policy takes precedence.
 	Behavior       behavior.Policy
+	// VerifyHandshake, when set, is asked of a client's connection once its
+	// TLS handshake is done, before the connection says it is (as quiche's
+	// TlsClientHandshaker::FinishHandshake reads ALPS): an error ends the
+	// connection at once, its Finished not sent, with the code and reason of
+	// a *TransportError or an *ApplicationError, any other as INTERNAL_ERROR.
+	VerifyHandshake func(ConnectionState) error
 	// GetConfigForClient is called for incoming connections.
 	// If the error is not nil, the connection attempt is refused.
 	GetConfigForClient func(info *ClientInfo) (*Config, error)
