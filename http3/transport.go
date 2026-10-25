@@ -230,6 +230,25 @@ func (t *Transport) Preconnect(ctx context.Context, addr string) error {
 	}
 }
 
+// HasConn says whether t holds a QUIC connection to hostname (host:port) that
+// was made and is still up: a request with OnlyCachedConn goes on it rather
+// than on a connection of another protocol, as Chromium sends a request on a
+// QUIC session it has for the origin. One still being dialed is none yet.
+func (t *Transport) HasConn(hostname string) bool {
+	t.mutex.Lock()
+	cl, ok := t.clients[hostname]
+	t.mutex.Unlock()
+	if !ok {
+		return false
+	}
+	select {
+	case <-cl.dialing:
+	default:
+		return false
+	}
+	return cl.dialErr == nil && cl.conn.Context().Err() == nil
+}
+
 // RoundTripOpt is like RoundTrip, but takes options.
 func (t *Transport) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.Response, error) {
 	rsp, err := t.roundTripOpt(req, opt)
