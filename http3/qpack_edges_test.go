@@ -164,3 +164,64 @@ func TestH3UnprocessedRetryBudget(t *testing.T) {
 		tr.Close()
 	}
 }
+
+// failingClient answers every request with err.
+type failingClient struct {
+	calls *atomic.Int32
+	err   error
+}
+
+func (m failingClient) OpenRequestStream(context.Context) (*RequestStream, error) { panic("unused") }
+func (m failingClient) RoundTrip(*http.Request) (*http.Response, error) {
+	m.calls.Add(1)
+	return nil, m.err
+}
+
+func TestARequestOnlyACachedConnectionMayTakeIsNotSentAgainAfterAnErrorOfTheProtocol(t *testing.T) {
+	p := behavior.Legacy()
+	p["h3.retry_attempts"] = []byte("3")
+	p["h3.retry_methods"] = []byte(`["GET"]`)
+	p["h3.retry_application_errors"] = []byte(`[512]`)
+	for _, tt := range []struct {
+		name         string
+		err          error
+		only         bool
+		calls, dials int32
+		says         error
+	}{
+		// its caller is told what went wrong, and no connection is made for it
+		{"an error of the protocol, cached only", &quic.ApplicationError{ErrorCode: 512}, true, 1, 1, &quic.ApplicationError{ErrorCode: 512}},
+		{"an error of the protocol", &quic.ApplicationError{ErrorCode: 512}, false, 3, 3, &quic.ApplicationError{ErrorCode: 512}},
+		// a request refused unprocessed is tried again, and finds no connection
+		{"refused unprocessed, cached only", &Error{ErrorCode: ErrCodeRequestRejected}, true, 1, 1, ErrNoCachedConn},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls, dials atomic.Int32
+			tr := Transport{Behavior: p, Dial: func(context.Context, string, *tls.Config, *quic.Config) (*quic.Conn, error) {
+				dials.Add(1)
+				conn, _ := newConnPair(t)
+				return conn, nil
+			}, newClientConn: func(*quic.Conn) clientConn { return failingClient{&calls, tt.err} }}
+			defer tr.Close()
+			if err := tr.Preconnect(context.Background(), "example.invalid:443"); err != nil {
+				t.Fatal(err)
+			}
+			req, _ := http.NewRequest("GET", "https://example.invalid", nil)
+			_, err := tr.RoundTripOpt(req, RoundTripOpt{OnlyCachedConn: tt.only})
+			if calls.Load() != tt.calls || dials.Load() != tt.dials {
+				t.Fatalf("calls %d dials %d", calls.Load(), dials.Load())
+			}
+			var app *quic.ApplicationError
+			switch want := tt.says.(type) {
+			case *quic.ApplicationError:
+				if !errors.As(err, &app) || app.ErrorCode != want.ErrorCode {
+					t.Fatalf("said %v", err)
+				}
+			default:
+				if !errors.Is(err, want) {
+					t.Fatalf("said %v", err)
+				}
+			}
+		})
+	}
+}
