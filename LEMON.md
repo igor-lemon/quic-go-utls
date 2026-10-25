@@ -32,7 +32,11 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   unanswered closed with quiche's reason (`idle_close.go`), the first flight
   laid out by chaos (`chaos.go`, `chaos_stream.go`: quiche's
   `QuicChaosProtector` and `MultiPacketChaosProtect`), padding after an
-  Initial's frames. `Config.VerifyHandshake` is asked of a client's
+  Initial's frames. A split that falls on a piece of one byte is passed
+  over, as quiche's `SplitCryptoFrame` passes it over, so a packet has a
+  piece fewer than drawn now and then: the first flight's second packet
+  about once in 7,000, which `TestAClientsFirstFlightIsLaidOutAsChromes`
+  failed on until it allowed it (2026-10-25). `Config.VerifyHandshake` is asked of a client's
   connection once its TLS handshake is done, before the connection says it
   is: its error closes the connection before its Finished goes, a
   `TransportError` or `ApplicationError` as it is, `ErrHandshakeAbandoned`

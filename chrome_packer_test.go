@@ -118,7 +118,14 @@ func TestAClientsFirstFlightIsLaidOutAsChromes(t *testing.T) {
 			pings := bytes.Count(l.kinds, []byte("P"))
 			require.GreaterOrEqual(t, pings, 2)
 			require.LessOrEqual(t, pings, 10)
-			require.GreaterOrEqual(t, bytes.Count(l.kinds, []byte("C")), 3, "split at least twice: %s", l.kinds)
+			// Split at least twice, unless a split fell on a piece of one
+			// byte, which quiche's SplitCryptoFrame passes over: the second
+			// packet, about once in 7,000.
+			oneByte := false
+			for _, d := range l.crypto {
+				oneByte = oneByte || len(d) == 1
+			}
+			require.True(t, bytes.Count(l.kinds, []byte("C")) >= 3 || oneByte, "split at least twice: %s", l.kinds)
 			layouts = append(layouts, l)
 			p.buffer.Release()
 		}
