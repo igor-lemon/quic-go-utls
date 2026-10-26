@@ -451,7 +451,9 @@ var newClientConnection = func(
 		s.rttStats,
 		&s.connStats,
 		false, // has no effect
-		s.conn.capabilities().ECN,
+		// quiche marks no packet but for its Prague sender (ECT(1)); Chrome's
+		// Cubic and BBR mark none (EnableECT0 and EnableECT1 are false)
+		s.conn.capabilities().ECN && s.config.Policy().Text("quic.ecn") != "none",
 		s.receivedPacketHandler.IgnorePacketsBelow,
 		s.perspective,
 		s.qlogger,
@@ -595,6 +597,7 @@ func (c *Conn) preSetup() {
 		if pol.Has("quic.active_cid_limit") {
 			c.connIDManager.maxActiveConnectionIDs = pol.Int("quic.active_cid_limit")
 		}
+		c.connIDManager.whenRetired = pol.Text("quic.connection_id_change") == "when-retired"
 		if pol.Has("quic.ack_timer_ms") {
 			c.receivedPacketHandler.SetMaxAckDelay(time.Duration(pol.Uint("quic.ack_timer_ms")) * time.Millisecond)
 		}
@@ -996,6 +999,11 @@ func (c *Conn) handleHandshakeComplete(now monotime.Time) error {
 	// During a 0-RTT connection, the client is only allowed to use the new transport parameters for 1-RTT packets.
 	if c.perspective == protocol.PerspectiveClient {
 		c.applyTransportParameters()
+		if c.config.InitialData != nil {
+			// the server's stream limits in: what is written now is sent with
+			// the Finished
+			c.config.InitialData(c)
+		}
 		return nil
 	}
 
@@ -1040,7 +1048,9 @@ func (c *Conn) handleHandshakeConfirmed(now monotime.Time) error {
 	c.handshakeConfirmed = true
 	c.cryptoStreamHandler.SetHandshakeConfirmed()
 
-	if !c.config.DisablePathMTUDiscovery && c.conn.capabilities().DF {
+	// quiche's client probes the path MTU only for the MTUH and MTUL
+	// connection options, which Chrome does not send
+	if !c.config.DisablePathMTUDiscovery && c.conn.capabilities().DF && c.config.Policy().Text("quic.mtu_probes") != "none" {
 		c.mtuDiscoverer.Start(now)
 	}
 	return nil

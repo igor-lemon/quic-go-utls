@@ -121,6 +121,15 @@ type Config struct {
 	// connection at once, its Finished not sent, with the code and reason of
 	// a *TransportError or an *ApplicationError, any other as INTERNAL_ERROR.
 	VerifyHandshake func(ConnectionState) error
+	// InitialData, when set, is called on a client's connection once its
+	// handshake is done and its 1-RTT keys are in, before the connection says
+	// it is and before it sends anything after: what it writes to streams
+	// goes in the packets that carry the client's Finished, as quiche's
+	// QuicSpdySession::SendInitialData writes the HTTP/3 control stream once
+	// encryption is established. It runs on the connection's own goroutine,
+	// so it must not wait for the connection (no OpenStreamSync, no
+	// CloseWithError).
+	InitialData func(*Conn)
 	// GetConfigForClient is called for incoming connections.
 	// If the error is not nil, the connection attempt is refused.
 	GetConfigForClient func(info *ClientInfo) (*Config, error)

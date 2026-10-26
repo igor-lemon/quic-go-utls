@@ -23,7 +23,11 @@ type connIDManager struct {
 	highestProbingID uint64
 	pathProbing      map[pathID]newConnID // initialized lazily
 
-	handshakeComplete         bool
+	handshakeComplete bool
+	// whenRetired keeps the connection ID in use until the peer retires it
+	// (retire_prior_to), as quiche's client does: no change of its own after
+	// the handshake, nor later (quic.connection_id_change when-retired)
+	whenRetired               bool
 	activeSequenceNumber      uint64
 	highestRetired            uint64
 	activeConnectionID        protocol.ConnectionID
@@ -223,7 +227,7 @@ func (h *connIDManager) SentPacket() {
 }
 
 func (h *connIDManager) shouldUpdateConnID() bool {
-	if !h.handshakeComplete {
+	if !h.handshakeComplete || h.whenRetired {
 		return false
 	}
 	// initiate the first change as early as possible (after handshake completion)

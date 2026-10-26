@@ -182,6 +182,9 @@ type RequestStream struct {
 	sentRequest   bool
 	requestedGzip bool
 	isConnect     bool
+	// readSideOnReset: a stream the server resets has its read side closed
+	// alone (h3.peer_reset read-side)
+	readSideOnReset bool
 }
 
 func newRequestStream(
@@ -324,8 +327,7 @@ func (s *RequestStream) ReadResponse() (*http.Response, error) {
 	}
 	frame, err := s.str.frameParser.ParseNext(s.str.qlogger)
 	if err != nil {
-		s.str.CancelRead(quic.StreamErrorCode(ErrCodeFrameError))
-		s.str.CancelWrite(quic.StreamErrorCode(ErrCodeFrameError))
+		s.abandon(quic.StreamErrorCode(ErrCodeFrameError), err)
 		return nil, fmt.Errorf("http3: parsing frame failed: %w", err)
 	}
 	hf, ok := frame.(*headersFrame)
@@ -343,8 +345,7 @@ func (s *RequestStream) ReadResponse() (*http.Response, error) {
 	headerBlock := make([]byte, hf.Length)
 	if _, err := io.ReadFull(s.str.datagramStream, headerBlock); err != nil {
 		maybeQlogInvalidHeadersFrame(s.str.qlogger, s.str.StreamID(), hf.Length)
-		s.str.CancelRead(quic.StreamErrorCode(ErrCodeRequestIncomplete))
-		s.str.CancelWrite(quic.StreamErrorCode(ErrCodeRequestIncomplete))
+		s.abandon(quic.StreamErrorCode(ErrCodeRequestIncomplete), err)
 		return nil, fmt.Errorf("http3: failed to read response headers: %w", err)
 	}
 	decodeFn := s.decoder.Decode(headerBlock)
@@ -393,6 +394,24 @@ func (s *RequestStream) ReadResponse() (*http.Response, error) {
 	}
 	res.Body = s.responseBody
 	return res, nil
+}
+
+// abandon gives up on a request whose answer could not be read for err,
+// cancelling its stream both ways with code, as quic-go does. Where the
+// server reset the stream and the profile closes only the read side then
+// (readSideOnReset, quiche's QuicStream::OnStreamReset), nothing is sent for
+// a request sent whole, and one still sending is cancelled as Chromium's
+// QuicHttpStream::Close cancels a request it gives up on.
+func (s *RequestStream) abandon(code quic.StreamErrorCode, err error) {
+	var reset *quic.StreamError
+	if s.readSideOnReset && errors.As(err, &reset) && reset.Remote {
+		if str, ok := s.str.datagramStream.(interface{ sending() bool }); ok && str.sending() {
+			s.str.CancelWrite(quic.StreamErrorCode(ErrCodeRequestCanceled))
+		}
+		return
+	}
+	s.str.CancelRead(code)
+	s.str.CancelWrite(code)
 }
 
 type tracingReader struct {

@@ -87,7 +87,7 @@ func configWithNonZeroNonFunctionFields(t *testing.T) *Config {
 		}
 
 		switch fn := typ.Field(i).Name; fn {
-		case "GetConfigForClient", "RequireAddressValidation", "GetLogWriter", "AllowConnectionWindowIncrease", "Tracer", "VerifyHandshake":
+		case "GetConfigForClient", "RequireAddressValidation", "GetLogWriter", "AllowConnectionWindowIncrease", "Tracer", "VerifyHandshake", "InitialData":
 			// Can't compare functions.
 		case "Behavior":
 			f.Set(reflect.ValueOf(behavior.Legacy()))
@@ -141,6 +141,7 @@ func configWithNonZeroNonFunctionFields(t *testing.T) *Config {
 func TestConfigClone(t *testing.T) {
 	t.Run("function fields", func(t *testing.T) {
 		var calledAllowConnectionWindowIncrease, calledTracer bool
+		var initialData int
 		c1 := &Config{
 			GetConfigForClient:            func(info *ClientInfo) (*Config, error) { return nil, assert.AnError },
 			AllowConnectionWindowIncrease: func(*Conn, uint64) bool { calledAllowConnectionWindowIncrease = true; return true },
@@ -149,10 +150,15 @@ func TestConfigClone(t *testing.T) {
 				return nil
 			},
 			VerifyHandshake: func(ConnectionState) error { return assert.AnError },
+			InitialData:     func(*Conn) { initialData++ },
 		}
 		require.ErrorIs(t, populateConfig(c1).VerifyHandshake(ConnectionState{}), assert.AnError)
+		populateConfig(c1).InitialData(nil)
+		require.Equal(t, 1, initialData)
 		c2 := c1.Clone()
 		require.ErrorIs(t, c2.VerifyHandshake(ConnectionState{}), assert.AnError)
+		c2.InitialData(nil)
+		require.Equal(t, 2, initialData)
 		c2.AllowConnectionWindowIncrease(nil, 1234)
 		require.True(t, calledAllowConnectionWindowIncrease)
 		_, err := c2.GetConfigForClient(&ClientInfo{})
