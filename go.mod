@@ -3,7 +3,7 @@ module github.com/igor-lemon/quic-go-utls
 go 1.24.1
 
 require (
-	github.com/igor-lemon/fhttp v0.6.10-0.20261025225113-7c24ff25476b
+	github.com/igor-lemon/fhttp v0.6.10-0.20261026204301-7c44dba01c5a
 	github.com/quic-go/qpack v0.6.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2
@@ -17,7 +17,7 @@ require (
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/igor-lemon/utls v1.7.8-barnius.0.20261025223421-d802e856f26a
+	github.com/igor-lemon/utls v1.7.8-barnius.0.20261026164924-161481babd43
 	github.com/jordanlewis/gcassert v0.0.0-20250430164644-389ef753e22e // indirect
 	github.com/klauspost/compress v1.18.2 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
