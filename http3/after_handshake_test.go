@@ -207,12 +207,18 @@ func TestAClientConnectionMadeAsTheHandshakeCompletedIsTakenOnce(t *testing.T) {
 	require.Nil(t, (*earlyClientConn)(nil).take())
 }
 
-// resetsHeard are the RESET_STREAM frames a server heard of request streams.
+// resetsHeard are the RESET_STREAM frames a server heard of request streams,
+// one a stream.
 func resetsHeard(packets []quicqlog.PacketReceived) []*quicqlog.ResetStreamFrame {
 	var resets []*quicqlog.ResetStreamFrame
+	// One a stream: a frame sent again, its packet's acknowledgement late
+	// (1 run in 4 under load: the same stream and code heard three times),
+	// is the same reset.
+	seen := map[quic.StreamID]bool{}
 	for _, p := range packets {
 		for _, f := range p.Frames {
-			if r, ok := f.Frame.(*quicqlog.ResetStreamFrame); ok && r.StreamID%4 == 0 {
+			if r, ok := f.Frame.(*quicqlog.ResetStreamFrame); ok && r.StreamID%4 == 0 && !seen[r.StreamID] {
+				seen[r.StreamID] = true
 				resets = append(resets, r)
 			}
 		}
