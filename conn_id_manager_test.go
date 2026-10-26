@@ -430,3 +430,45 @@ func benchmarkConnIDManager(b *testing.B, reordered bool) {
 		}
 	}
 }
+
+func TestConnIDManagerKeepsItsConnIDUntilThePeerRetiresIt(t *testing.T) {
+	var frameQueue []wire.Frame
+	newManager := func(whenRetired bool) *connIDManager {
+		m := newConnIDManager(
+			protocol.ParseConnectionID([]byte{1, 2, 3, 4}),
+			func(protocol.StatelessResetToken) {},
+			func(protocol.StatelessResetToken) {},
+			func(f wire.Frame) { frameQueue = append(frameQueue, f) },
+		)
+		m.whenRetired = whenRetired
+		m.SetHandshakeComplete()
+		for i := 1; i < protocol.MaxActiveConnectionIDs; i++ {
+			require.NoError(t, m.Add(&wire.NewConnectionIDFrame{
+				SequenceNumber: uint64(i),
+				ConnectionID:   protocol.ParseConnectionID([]byte{byte(i), 0, 0, 0}),
+			}))
+		}
+		return m
+	}
+	// quic-go's: the first change at once after the handshake
+	m := newManager(false)
+	require.Equal(t, protocol.ParseConnectionID([]byte{1, 0, 0, 0}), m.Get())
+	require.Equal(t, []wire.Frame{&wire.RetireConnectionIDFrame{SequenceNumber: 0}}, frameQueue)
+	// quiche's: none of its own, however many packets go and however many
+	// connection IDs it holds
+	frameQueue = nil
+	m = newManager(true)
+	for i := 0; i < 2*protocol.PacketsPerConnectionID; i++ {
+		m.SentPacket()
+		require.Equal(t, protocol.ParseConnectionID([]byte{1, 2, 3, 4}), m.Get())
+	}
+	require.Empty(t, frameQueue)
+	// until the peer retires the one in use
+	require.NoError(t, m.Add(&wire.NewConnectionIDFrame{
+		SequenceNumber: 4,
+		RetirePriorTo:  1,
+		ConnectionID:   protocol.ParseConnectionID([]byte{4, 0, 0, 0}),
+	}))
+	require.Equal(t, protocol.ParseConnectionID([]byte{1, 0, 0, 0}), m.Get())
+	require.Equal(t, []wire.Frame{&wire.RetireConnectionIDFrame{SequenceNumber: 0}}, frameQueue)
+}

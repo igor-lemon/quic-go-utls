@@ -166,8 +166,18 @@ func newClientConn(
 		c.conn.alps = newALPSState(pol, encoder.configureEarly)
 	}
 	// send the SETTINGs frame, using 0-RTT data, if possible
+	opened := pol.Text("h3.control_stream") == "with-finished"
+	var openErr error
+	if opened {
+		// written now, which Transport.dial makes happen on the QUIC
+		// connection's own goroutine as its handshake completes: the control
+		// stream goes with the client's Finished, as quiche's
+		// QuicSpdySession::SendInitialData sends it once encryption is
+		// established; anything that waits for the connection stays below
+		openErr = c.openControlStream()
+	}
 	go func() {
-		c.setupErr = c.setupConn()
+		c.setupErr = c.setupConn(opened, openErr)
 		close(c.setupComplete)
 		if err := c.setupErr; err != nil {
 			if c.logger != nil {
@@ -210,7 +220,28 @@ func (c *ClientConn) waitForSetup(ctx context.Context) error {
 	}
 }
 
-func (c *ClientConn) setupConn() error {
+// setupConn opens the control stream, unless it was (opened, failing with
+// err), and then the QPACK streams.
+func (c *ClientConn) setupConn(opened bool, err error) error {
+	if !opened {
+		err = c.openControlStream()
+	}
+	if err == nil {
+		switch c.behavior.Text("h3.qpack.streams") {
+		case "eager":
+			err = c.conn.qpack.startEager()
+		case "deferred":
+			err = c.conn.qpack.startDeferred()
+		}
+	}
+	return err
+}
+
+// openControlStream opens the control stream and writes what it begins with:
+// its type, the SETTINGS, and the frames h3.control_order puts after them.
+// It waits for nothing: the stream is opened only where the server allows
+// one, and so little is written that the stream keeps it all for sending.
+func (c *ClientConn) openControlStream() error {
 	if c.additionalSettings[1] > qpackTableSafetyLimit || c.additionalSettings[7] > qpackBlockedSafetyLimit {
 		return errors.New("QPACK settings exceed engine safety bounds")
 	}
@@ -260,14 +291,6 @@ func (c *ClientConn) setupConn() error {
 	c.controlStream = str
 
 	_, err = str.Write(b)
-	if err == nil {
-		switch c.behavior.Text("h3.qpack.streams") {
-		case "eager":
-			err = c.conn.qpack.startEager()
-		case "deferred":
-			err = c.conn.qpack.startDeferred()
-		}
-	}
 	return err
 }
 

@@ -555,11 +555,52 @@ func (t *Transport) dial(ctx context.Context, hostname string) (*quic.Conn, clie
 			return conn, err
 		}
 	}
-	conn, err := dial(ctx, hostname, tlsConf, t.QUICConfig)
+	cfg := t.QUICConfig
+	var early *earlyClientConn
+	if t.Behavior.Text("h3.control_stream") == "with-finished" {
+		// the client connection is made as the handshake completes, so that
+		// its control stream goes with the Finished
+		early = &earlyClientConn{make: t.newClientConn}
+		cfg = cfg.Clone()
+		cfg.InitialData = early.made
+	}
+	conn, err := dial(ctx, hostname, tlsConf, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
+	if cc := early.take(); cc != nil {
+		return conn, cc, nil
+	}
 	return conn, t.newClientConn(conn), nil
+}
+
+// earlyClientConn is a client connection made on a QUIC connection's own
+// goroutine as its handshake completes (quic.Config.InitialData), for its
+// dial to take once DialEarly returns; none is made once the dial took
+// none, where DialEarly returned before the handshake completed (0-RTT).
+type earlyClientConn struct {
+	make  func(*quic.Conn) clientConn
+	mu    sync.Mutex
+	taken bool
+	cc    clientConn
+}
+
+func (e *earlyClientConn) made(conn *quic.Conn) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.taken {
+		e.cc = e.make(conn)
+	}
+}
+
+func (e *earlyClientConn) take() clientConn {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.taken = true
+	return e.cc
 }
 
 func (t *Transport) resolveUDPAddr(ctx context.Context, network, addr string) (*net.UDPAddr, error) {

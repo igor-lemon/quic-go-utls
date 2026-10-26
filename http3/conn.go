@@ -200,6 +200,9 @@ func (c *Conn) openRequestStream(
 		rsp,
 	)
 	rs.qpack = c.qpack
+	if requestWriter != nil {
+		rs.readSideOnReset = requestWriter.behavior.Text("h3.peer_reset") == "read-side"
+	}
 	rs.decodeContext, rs.cancelDecode = context.WithCancel(ctx)
 	hstr.decodeCancel = rs.cancelDecode
 	return rs, nil

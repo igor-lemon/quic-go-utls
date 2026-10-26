@@ -90,6 +90,14 @@ func (s *stateTrackingStream) Close() error {
 	return s.Stream.Close()
 }
 
+// sending is whether the stream's send side is still open: neither closed,
+// cancelled nor failed.
+func (s *stateTrackingStream) sending() bool {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+	return s.sendErr == nil
+}
+
 func (s *stateTrackingStream) CancelWrite(e quic.StreamErrorCode) {
 	s.closeSend(&quic.StreamError{StreamID: s.StreamID(), ErrorCode: e})
 	s.Stream.CancelWrite(e)

@@ -66,3 +66,33 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   DNS path, which sends it over TCP) acts on. A request refused unprocessed
   is still tried again, and says there is no connection. Test
   `TestARequestOnlyACachedConnectionMayTakeIsNotSentAgainAfterAnErrorOfTheProtocol`.
+- A client after its handshake, as Chrome 155's (2026-10-26; quiche at
+  Chrome 155's DEPS revision `0b2bc13f`, the same code at Chrome 151's
+  `4729ceb2`; measured on `../net-fp-server/captures/review-20261023/bench`
+  `h3` and `h3alps`): `quic.ecn` `none` marks no packet for ECN (quiche
+  marks only for its Prague sender, ECT(1); Cubic and BBR, Chrome's, mark
+  none), `quic.mtu_probes` `none` sends no path MTU probe (quiche's client
+  probes only for the MTUH and MTUL connection options, which Chrome does not
+  send), `quic.connection_id_change` `when-retired` keeps the server's
+  connection ID until the server retires it (`connIDManager.whenRetired`:
+  quic-go changed to the next one at once after the handshake, then every
+  ~10,000 packets). `Config.InitialData` is called on a client's connection
+  once its handshake is done and the server's stream limits are in, before
+  the connection says it is and sends anything after: what it writes goes
+  in the datagram that carries the Finished. http3 (`h3.control_stream`
+  `with-finished`): the Transport's dial makes the client connection there
+  (`earlyClientConn`, none once its dial took none, as with 0-RTT), and the
+  connection writes its control stream at once (`openControlStream`), as
+  quiche's `QuicSpdySession::SendInitialData` writes it once encryption is
+  established; the QPACK streams are reserved after, on a goroutine of its
+  own. `h3.peer_reset` `read-side`: a request stream the server resets has
+  its read side closed alone (quiche's `QuicStream::OnStreamReset` of IETF
+  QUIC): nothing more is sent on it for a request sent whole (quic-go reset
+  its send side too, H3_FRAME_ERROR), one still sending is cancelled with
+  H3_REQUEST_CANCELLED, as Chromium's `QuicHttpStream::Close` cancels a
+  request it gives up on (read in the source; Chrome adds a STOP_SENDING
+  that quic-go sends no more once the server reset). Tests
+  `after_handshake_test.go` (the server's qlog: ECN, packet sizes,
+  RETIRE_CONNECTION_ID, the stream with the Finished), `conn_id_manager_test.go`,
+  `config_test.go`, `http3/after_handshake_test.go`; 36 mutants, all
+  killed.
