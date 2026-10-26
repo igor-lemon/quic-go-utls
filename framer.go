@@ -3,6 +3,7 @@ package quic
 import (
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/igor-lemon/quic-go-utls/internal/ackhandler"
 	"github.com/igor-lemon/quic-go-utls/internal/flowcontrol"
@@ -36,6 +37,10 @@ type framer struct {
 	activeStreams            map[protocol.StreamID]streamFrameGetter
 	streamQueue              ringbuffer.RingBuffer[protocol.StreamID]
 	streamsWithControlFrames map[protocol.StreamID]streamControlFrameGetter
+	// sources are the streams whose data goes only in packets sent for
+	// something else (BundleOpportunistically), sourceCount how many
+	sources     map[protocol.StreamID]opportunisticSource
+	sourceCount atomic.Int32
 
 	controlFrameMutex          sync.Mutex
 	controlFrames              []wire.Frame
@@ -239,6 +244,10 @@ func (f *framer) AddStreamWithControlFrames(id protocol.StreamID, str streamCont
 func (f *framer) RemoveActiveStream(id protocol.StreamID) {
 	f.mutex.Lock()
 	delete(f.activeStreams, id)
+	if _, ok := f.sources[id]; ok {
+		delete(f.sources, id)
+		f.sourceCount.Store(int32(len(f.sources)))
+	}
 	// We don't delete the stream from the streamQueue,
 	// since we'd have to iterate over the ringbuffer.
 	// Instead, we check if the stream is still in activeStreams when appending STREAM frames.
@@ -280,6 +289,8 @@ func (f *framer) Handle0RTTRejection() {
 	for id := range f.activeStreams {
 		delete(f.activeStreams, id)
 	}
+	clear(f.sources)
+	f.sourceCount.Store(0)
 	var j int
 	for i, frame := range f.controlFrames {
 		switch frame.(type) {

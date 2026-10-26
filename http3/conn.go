@@ -205,6 +205,9 @@ func (c *Conn) openRequestStream(
 	}
 	rs.decodeContext, rs.cancelDecode = context.WithCancel(ctx)
 	hstr.decodeCancel = rs.cancelDecode
+	if c.qpack != nil && c.qpack.decoderWriter.opportunistic {
+		str.SetResetHandler(hstr.qpackReset)
+	}
 	return rs, nil
 }
 

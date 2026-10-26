@@ -136,6 +136,18 @@ func (s *Stream) CancelRead(errorCode StreamErrorCode) {
 	s.receiveStr.CancelRead(errorCode)
 }
 
+// SetResetHandler has f called as the peer's RESET_STREAM of the stream is
+// taken, on the connection's own goroutine, before anything the connection
+// sends after it, as quiche's QuicSpdyStream::OnStreamReset runs while the
+// frame is processed; finReceived says whether the stream's FIN came before.
+// f must not block nor call into the connection. It is called once, and not
+// for a stream whose reading was cancelled before.
+func (s *Stream) SetResetHandler(f func(finReceived bool)) {
+	s.receiveStr.mutex.Lock()
+	s.receiveStr.resetHandler = f
+	s.receiveStr.mutex.Unlock()
+}
+
 // The Context is canceled as soon as the write-side of the stream is closed.
 // See [SendStream.Context] for more details.
 func (s *Stream) Context() context.Context {

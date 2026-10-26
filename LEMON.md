@@ -96,3 +96,28 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   RETIRE_CONNECTION_ID, the stream with the Finished), `conn_id_manager_test.go`,
   `config_test.go`, `http3/after_handshake_test.go`; 36 mutants, all
   killed.
+- How a client puts its HTTP/3 writes in packets, as Chrome 155's
+  (2026-10-26; quiche at Chrome 155's DEPS revision `0b2bc13f`, Chromium
+  155.0.8059.85; measured on `../net-fp-server/captures/review-20261023/
+  bench` `h3` and `h3alps`). `Conn.BundleWrites` holds back the packets the
+  writes on the connection's streams would send until the bundle is flushed
+  (nested by count, `Flush` once), the streams' frames then in the order the
+  streams were given something, as quiche's `ScopedPacketFlusher`; a stream
+  already sending is held from where the bundle's writes begin
+  (`SendStream.wroteAt`, `holdBack`, `heldAt`, its FIN too, retransmissions
+  not), and a write that has to wait spills the bundle (`Spilled`).
+  `Conn.BundleOpportunistically(str, source)` has a stream send only what
+  `source` gives, asked by the packer before a packet that goes anyway (new
+  frames, an ACK not of a retransmission, a DATAGRAM), first in it, as
+  quiche's `MaybeBundleOpportunistically` flushes its decoder stream.
+  `Stream.SetResetHandler` runs a function on the connection's goroutine as
+  the peer's RESET_STREAM is taken, as quiche's `OnStreamReset`. http3:
+  `h3.request_writes` `one-flush` bundles a request's PRIORITY_UPDATE, its
+  QPACK encoder instructions (waiting for their writer when it had nothing
+  else queued and its stream is reserved or open) and its HEADERS with FIN,
+  as Chromium's `QuicHttpStream::DoLoop`; `h3.qpack.decoder_writes`
+  `opportunistic` keeps the decoder's instructions (bounded) for the next
+  such packet, a reset's Stream Cancellation made on the connection's
+  goroutine so that it goes with the reset's ACK. Tests `bundle_test.go`,
+  `bundle_unit_test.go`, `http3/bundle_test.go`; 106 mutants, all killed
+  but one equivalent (a wait for no instruction).

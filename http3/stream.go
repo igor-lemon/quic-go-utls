@@ -185,6 +185,9 @@ type RequestStream struct {
 	// readSideOnReset: a stream the server resets has its read side closed
 	// alone (h3.peer_reset read-side)
 	readSideOnReset bool
+	// bundle holds the request's writes back, to go out together
+	// (h3.request_writes one-flush)
+	bundle *quic.WriteBundle
 }
 
 func newRequestStream(
@@ -299,7 +302,22 @@ func (s *RequestStream) SendRequestHeader(req *http.Request) error {
 	if req.Body != nil && req.Body != http.NoBody {
 		return errors.New("http3: invalid use of RequestStream.SendRequestHeader with a request that has a request body")
 	}
+	if bundle := s.bundleWrites(); bundle != nil {
+		defer bundle.Flush()
+	}
 	return s.sendRequestHeader(req)
+}
+
+// bundleWrites holds the request's writes back, to go out together, when its
+// profile writes a request under one flush, as quiche's QuicHttpStream::DoLoop
+// writes a request's PRIORITY_UPDATE, QPACK encoder instructions and HEADERS
+// under one ScopedPacketFlusher (h3.request_writes one-flush); nil otherwise.
+func (s *RequestStream) bundleWrites() *quic.WriteBundle {
+	if s.requestWriter.behavior.Text("h3.request_writes") != "one-flush" {
+		return nil
+	}
+	s.bundle = s.str.conn.conn.BundleWrites()
+	return s.bundle
 }
 
 func (s *RequestStream) sendRequestHeader(req *http.Request) error {
@@ -312,7 +330,7 @@ func (s *RequestStream) sendRequestHeader(req *http.Request) error {
 	}
 	s.isConnect = req.Method == http.MethodConnect
 	s.sentRequest = true
-	return s.requestWriter.WriteRequestHeader(s.str.datagramStream, req, s.requestedGzip, s.str.StreamID(), s.str.qlogger)
+	return s.requestWriter.writeRequestHeader(s.str.datagramStream, req, s.requestedGzip, s.str.StreamID(), s.str.qlogger, s.bundle)
 }
 
 // ReadResponse reads the HTTP response from the stream.

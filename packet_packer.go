@@ -149,6 +149,11 @@ type packetPacker struct {
 	padAtEnd         bool
 	chaos            *chaosLayout
 	earlyApplication bool
+
+	// opportunistic makes the streams that send only in packets sent for
+	// something else active once a packet goes out anyway (the framer's
+	// BundleOpportunistically)
+	opportunistic interface{ BundleOpportunistically() bool }
 }
 
 // setPolicy has a client's packer number, pad and lay out its packets as
@@ -186,7 +191,9 @@ func newPacketPacker(
 	var b [16]byte
 	_, _ = crand.Read(b[:])
 
+	opportunistic, _ := framer.(interface{ BundleOpportunistically() bool })
 	return &packetPacker{
+		opportunistic:       opportunistic,
 		cryptoSetup:         cryptoSetup,
 		getDestConnID:       getDestConnID,
 		srcConnID:           srcConnID,
@@ -692,6 +699,14 @@ func (p *packetPacker) composeNextPacket(
 			pl.ack = ack
 			pl.length += ack.Length(v)
 		}
+	}
+	// a packet that goes out anyway, for an ACK, new frames or a DATAGRAM,
+	// carries first what streams send only opportunistically (quiche's
+	// MaybeBundleOpportunistically before new data, SendAllPendingAcks
+	// before an ACK; a retransmission bundles nothing)
+	if p.opportunistic != nil && (hasData || pl.ack != nil && !hasRetransmission ||
+		p.datagramQueue != nil && p.datagramQueue.Peek() != nil) && p.opportunistic.BundleOpportunistically() {
+		hasData = true
 	}
 
 	if p.datagramQueue != nil {

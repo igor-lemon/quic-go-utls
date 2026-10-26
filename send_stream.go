@@ -49,6 +49,15 @@ type SendStream struct {
 
 	dataForWriting []byte // during a Write() call, this slice is the part of p that still needs to be sent out
 	nextFrame      *wire.StreamFrame
+	// source gives what the stream sends, in packets sent for something else
+	// (Conn.BundleOpportunistically); what it gave is in dataForWriting
+	source func([]byte) []byte
+	// wroteAt is where what the latest Write or Close gave begins; while a
+	// write bundle holds the stream (held), what begins at heldAt waits for
+	// it to be flushed (Conn.BundleWrites)
+	wroteAt protocol.ByteCount
+	held    bool
+	heldAt  protocol.ByteCount
 
 	writeChan chan struct{}
 	writeOnce chan struct{}
@@ -118,6 +127,9 @@ func (s *SendStream) write(p []byte) (bool /* is newly completed */, int, error)
 	if s.finishedWriting {
 		return false, 0, fmt.Errorf("write on closed stream %d", s.streamID)
 	}
+	if s.source != nil {
+		return false, 0, errOpportunistic
+	}
 	if !s.deadline.IsZero() && !monotime.Now().Before(s.deadline) {
 		return false, 0, errDeadline
 	}
@@ -141,6 +153,10 @@ func (s *SendStream) write(p []byte) (bool /* is newly completed */, int, error)
 		// When the user now calls Close(), this is much more likely to happen before we popped that last STREAM frame,
 		// allowing us to set the FIN bit on that frame (instead of sending an empty STREAM frame with FIN).
 		if s.canBufferStreamFrame() && len(s.dataForWriting) > 0 {
+			s.wroteAt = s.writeOffset
+			if s.nextFrame != nil {
+				s.wroteAt += s.nextFrame.DataLen()
+			}
 			if s.nextFrame == nil {
 				f := wire.GetStreamFrame()
 				f.Offset = s.writeOffset
@@ -261,7 +277,7 @@ func (s *SendStream) popNewOrRetransmittedStreamFrame(maxBytes protocol.ByteCoun
 	}
 
 	if len(s.dataForWriting) == 0 && s.nextFrame == nil {
-		if s.finishedWriting && !s.finSent {
+		if s.finishedWriting && !s.finSent && !s.held {
 			s.finSent = true
 			return &wire.StreamFrame{
 				StreamID:       s.streamID,
@@ -274,6 +290,14 @@ func (s *SendStream) popNewOrRetransmittedStreamFrame(maxBytes protocol.ByteCoun
 	}
 
 	maxDataLen := s.flowController.SendWindowSize()
+	if s.held {
+		// what a write bundle holds waits for it, which makes the stream
+		// active again as it lets it go
+		if s.heldAt == s.writeOffset {
+			return nil, nil, false
+		}
+		maxDataLen = min(maxDataLen, s.heldAt-s.writeOffset)
+	}
 	if maxDataLen == 0 {
 		return nil, nil, true
 	}
@@ -300,7 +324,7 @@ func (s *SendStream) popNewOrRetransmittedStreamFrame(maxBytes protocol.ByteCoun
 	if f.DataLen() == maxDataLen && s.flowController.IsNewlyBlocked() {
 		blocked = &wire.StreamDataBlockedFrame{StreamID: s.streamID, MaximumStreamData: s.writeOffset}
 	}
-	f.Fin = s.finishedWriting && s.dataForWriting == nil && s.nextFrame == nil && !s.finSent
+	f.Fin = s.finishedWriting && s.dataForWriting == nil && s.nextFrame == nil && !s.finSent && !s.held
 	if f.Fin {
 		s.finSent = true
 	}
@@ -421,6 +445,10 @@ func (s *SendStream) Close() error {
 		return nil
 	}
 	s.finishedWriting = true
+	s.wroteAt = s.writeOffset + protocol.ByteCount(len(s.dataForWriting))
+	if s.nextFrame != nil {
+		s.wroteAt += s.nextFrame.DataLen()
+	}
 	cancelled := s.resetErr != nil
 	if cancelled {
 		s.cancellationFlagged = true

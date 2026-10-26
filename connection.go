@@ -161,6 +161,7 @@ type Conn struct {
 	receivedPacketHandler ackhandler.ReceivedPacketHandler
 	retransmissionQueue   *retransmissionQueue
 	framer                *framer
+	bundling              bundling // what write bundles hold back (BundleWrites)
 	connFlowController    flowcontrol.ConnectionFlowController
 	tokenStoreKey         string                    // only set for the client
 	tokenGenerator        *handshake.TokenGenerator // only set for the server
@@ -3102,6 +3103,9 @@ func (c *Conn) queueControlFrame(f wire.Frame) {
 func (c *Conn) onHasConnectionData() { c.scheduleSending() }
 
 func (c *Conn) onHasStreamData(id protocol.StreamID, str *SendStream) {
+	if c.bundling.hold(id, str, c.framer) {
+		return
+	}
 	c.framer.AddActiveStream(id, str)
 	c.scheduleSending()
 }

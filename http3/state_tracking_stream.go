@@ -134,6 +134,22 @@ func (s *stateTrackingStream) qpackAbandon() {
 	})
 }
 
+// qpackReset abandons the stream's QPACK state as the server's RESET_STREAM
+// is taken, on the connection's own goroutine (quic.Stream.SetResetHandler),
+// as quiche's QuicSpdyStream::OnStreamReset does while the frame is
+// processed: the Stream Cancellation, sent only when the stream's FIN had not
+// come, goes in the packet that acknowledges the reset, or a later one.
+func (s *stateTrackingStream) qpackReset(finReceived bool) {
+	if s.decodeCancel != nil {
+		s.decodeCancel()
+	}
+	s.qpackCancel.Do(func() {
+		if c, ok := s.clearer.(*Conn); ok && c.qpack != nil && !finReceived {
+			c.qpack.cancel(s.StreamID())
+		}
+	})
+}
+
 func (s *stateTrackingStream) Read(b []byte) (int, error) {
 	n, err := s.Stream.Read(b)
 	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {

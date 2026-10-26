@@ -159,6 +159,7 @@ func newClientConn(
 	)
 	c.conn.qpack = newQPACKSession(c.conn, additionalSettings, pol)
 	c.requestWriter.dynamic = c.conn.qpack.encoder
+	c.requestWriter.instructions = c.conn.qpack.encoderWriter
 	if pol.Text("h3.peer_settings") == "quiche" {
 		encoder := c.conn.qpack.encoder
 		// taken before the first request is written (roundTrip), or as the
@@ -547,6 +548,9 @@ func (c *ClientConn) sendRequestBody(str *RequestStream, body io.ReadCloser, con
 
 func (c *ClientConn) doRequest(req *http.Request, str *RequestStream) (*http.Response, error) {
 	trace := httptrace.ContextClientTrace(req.Context())
+	// the request's writes, its FIN among them when it has no body, go out
+	// together when its profile says so
+	bundle := str.bundleWrites()
 	var sendingReqFailed bool
 	if err := str.sendRequestHeader(req); err != nil {
 		traceWroteRequest(trace, err)
@@ -555,29 +559,32 @@ func (c *ClientConn) doRequest(req *http.Request, str *RequestStream) (*http.Res
 		}
 		sendingReqFailed = true
 	}
-	if !sendingReqFailed {
-		if req.Body == nil {
-			traceWroteRequest(trace, nil)
+	if !sendingReqFailed && req.Body == nil {
+		traceWroteRequest(trace, nil)
+		str.Close()
+	}
+	if bundle != nil {
+		// before the body, which no write of the bundle waits for
+		bundle.Flush()
+	}
+	if !sendingReqFailed && req.Body != nil {
+		// send the request body asynchronously
+		go func() {
+			contentLength := int64(-1)
+			// According to the documentation for http.Request.ContentLength,
+			// a value of 0 with a non-nil Body is also treated as unknown content length.
+			if req.ContentLength > 0 {
+				contentLength = req.ContentLength
+			}
+			err := c.sendRequestBody(str, req.Body, contentLength)
+			traceWroteRequest(trace, err)
+			if err != nil {
+				if c.logger != nil {
+					c.logger.Debug("error writing request", "error", err)
+				}
+			}
 			str.Close()
-		} else {
-			// send the request body asynchronously
-			go func() {
-				contentLength := int64(-1)
-				// According to the documentation for http.Request.ContentLength,
-				// a value of 0 with a non-nil Body is also treated as unknown content length.
-				if req.ContentLength > 0 {
-					contentLength = req.ContentLength
-				}
-				err := c.sendRequestBody(str, req.Body, contentLength)
-				traceWroteRequest(trace, err)
-				if err != nil {
-					if c.logger != nil {
-						c.logger.Debug("error writing request", "error", err)
-					}
-				}
-				str.Close()
-			}()
-		}
+		}()
 	}
 
 	// copy from net/http: support 1xx responses
