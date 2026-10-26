@@ -41,6 +41,15 @@ func (h *ReceivedPacketHandler) SetMaxAckDelay(delay time.Duration) {
 	h.appDataPackets.maxAckDelay = delay
 }
 
+// SetAlarmSlack has the application-data ACK alarm fire slack after its
+// delay, as a client's alarms fire where the kernel coalesces its timers
+// (Chrome's on macOS). The Initial and Handshake ACK alarms take none: a
+// timer of a millisecond is coalesced by a fraction of one. It is called
+// before any packet is received.
+func (h *ReceivedPacketHandler) SetAlarmSlack(slack time.Duration) {
+	h.appDataPackets.alarmSlack = slack
+}
+
 // SetHandshakeAckDelay has the Initial and Handshake packets acknowledged
 // within delay, as quiche does with its alarm's granularity (its
 // UberReceivedPacketManager), not at once: a client whose handshake ends

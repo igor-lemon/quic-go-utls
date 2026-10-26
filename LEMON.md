@@ -121,3 +121,15 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   goroutine so that it goes with the reset's ACK. Tests `bundle_test.go`,
   `bundle_unit_test.go`, `http3/bundle_test.go`; 106 mutants, all killed
   but one equivalent (a wait for no instruction).
+- How late a client's ACK of a lone 1-RTT packet goes, as Chrome 155's on
+  macOS (2026-10-26; quiche at Chrome 155's DEPS revision `0b2bc13f`,
+  Chromium 155.0.8059.85; measured on `../net-fp-server/captures/
+  review-20261023/bench` `h3alps` and `h3`). `ReceivedPacketHandler.
+  SetAlarmSlack` has the application-data ACK alarm fire the profile's
+  `quic.alarm_slack_ms` after its delay, as the loss detection and idle
+  alarms did: Chrome's every alarm goes through one timer of its network
+  thread, which the macOS kernel coalesces (not Chromium's task leeway,
+  measured). The Initial and Handshake ACK alarms (1 ms) take none, and a
+  server's alarms are on time. Tests `received_packet_tracker_test.go`,
+  `received_packet_handler_test.go`, `chrome_conn_test.go`; 11 mutants, all
+  killed.
