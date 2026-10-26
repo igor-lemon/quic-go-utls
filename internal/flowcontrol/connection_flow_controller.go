@@ -77,6 +77,12 @@ func (c *connectionFlowController) GetWindowUpdate(now monotime.Time) protocol.B
 	return offset
 }
 
+func (c *connectionFlowController) ReceiveWindow() protocol.ByteCount {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return c.receiveWindow
+}
+
 // EnsureMinimumWindowSize sets a minimum window size
 // it should make sure that the connection-level window is increased when a stream-level window grows
 func (c *connectionFlowController) EnsureMinimumWindowSize(inc protocol.ByteCount, now monotime.Time) {

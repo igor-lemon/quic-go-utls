@@ -133,3 +133,34 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   server's alarms are on time. Tests `received_packet_tracker_test.go`,
   `received_packet_handler_test.go`, `chrome_conn_test.go`; 11 mutants, all
   killed.
+- How a client acknowledges a long download, as Chrome 155's (2026-10-26;
+  quiche's `QuicReceivedPacketManager` and `QuicConnection` at Chrome 155's
+  DEPS revision `0b2bc13f`; measured on `../net-fp-server/captures/
+  review-20261023/bench` `h3`'s `/big`). `ReceivedPacketHandler.
+  SetAckDecimation` (`AckDecimation`: from an ack-eliciting packet numbered
+  the least received plus `After`, an ACK every `Packets`, a packet so
+  numbered waiting `RTTPercent` of the least round trip, 0 before a sample
+  (`Conn.minRTT`), at least `Min` and at most the ACK delay) as quiche's
+  `MaybeEnableAckDecimation` and `GetMaxAckDelay`; the application data's
+  ACK alarm never put off by a later packet (quiche keeps the earliest
+  timeout; without decimation the next packet makes an ACK due anyway, so
+  quic-go's later alarm was never seen). `SetGapPackets`: each packet that
+  leaves the highest range no longer than its count while a gap is below it
+  (between ranges, or below `IgnoreBelow`) acknowledged at once, as quiche's
+  `HasNewMissingPackets`. `SetAlarmSlackPercent`: the ACK alarm's slack no
+  more than that part of its delay, as the macOS kernel coalesces a timer by
+  a part of how long it waits. `AckQueued` and the connection's
+  `acksAfterPacket` (`quic.ack_sent_after` `packet`): `handlePackets` stops
+  taking packets once an ACK is due, and takes none while the run loop waits
+  for room in the send queue to send it (`sendQueueFull`), as quiche's
+  `ProcessUdpPacket` flushes its ACK. The packer's `ackOnlyMax`
+  (`quic.ack_only_max`) and `maxData` (`quic.ack_only_frame` `max-data`):
+  the packet after so many ACK-only ones carries MAX_DATA of the connection's
+  receive window as it stands (`ConnectionFlowController.ReceiveWindow`), sent
+  again if lost, as quiche's `OnAckNeedsRetransmittableFrame`, not a PING.
+  Tests `internal/ackhandler/ack_decimation_test.go`, `ack_policy_test.go`
+  (a full send queue in a `synctest` run loop),
+  `internal/flowcontrol/connection_flow_controller_test.go`; 65 mutants, all
+  killed but one equivalent (`sendQueueFull` set again where the loop finds
+  the queue still full before sending: the queue fills only in
+  `triggerSending`, after which the loop says so).

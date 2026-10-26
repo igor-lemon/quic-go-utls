@@ -206,6 +206,12 @@ type Conn struct {
 	receivedFirstPacket bool
 
 	blocked blockMode
+	// acksAfterPacket has an ACK sent as soon as the packet that makes it
+	// due is taken (setAckPolicy); sendQueueFull is the run loop's: it found
+	// the send queue full and has not sent since, and wakes when the queue
+	// has room
+	acksAfterPacket bool
+	sendQueueFull   bool
 
 	// the minimum of the max_idle_timeout values advertised by both endpoints
 	idleTimeout  time.Duration
@@ -532,6 +538,9 @@ var newClientConnection = func(
 	if packer.chaos != nil {
 		s.initialStream.setChaos(packer.chaos, &packer.rand)
 	}
+	if s.config.Policy().Text("quic.ack_only_frame") == "max-data" {
+		packer.maxData = func() protocol.ByteCount { return s.connFlowController.ReceiveWindow() }
+	}
 	s.packer = packer
 	if len(tlsConf.ServerName) > 0 {
 		s.tokenStoreKey = tlsConf.ServerName
@@ -604,6 +613,7 @@ func (c *Conn) preSetup() {
 		}
 		c.receivedPacketHandler.SetAlarmSlack(c.alarmSlack())
 		c.receivedPacketHandler.SetHandshakeAckDelay(time.Duration(pol.Uint("quic.handshake_ack_timer_ms")) * time.Millisecond)
+		c.setAckPolicy(pol)
 		c.rttStats.SetPTOPolicy(ptoPolicyOf(pol))
 	}
 
@@ -766,6 +776,7 @@ runLoop:
 		if c.sendQueue.WouldBlock() {
 			// The send queue is still busy sending out packets. Wait until there's space to enqueue new packets.
 			sendQueueAvailable = c.sendQueue.Available()
+			c.sendQueueFull = true
 			// Cancel the pacing timer, as we can't send any more packets until the send queue is available again.
 			c.pacingDeadline = 0
 			c.blocked = blockModeHardBlocked
@@ -784,11 +795,13 @@ runLoop:
 		if c.sendQueue.WouldBlock() {
 			// The send queue is still busy sending out packets. Wait until there's space to enqueue new packets.
 			sendQueueAvailable = c.sendQueue.Available()
+			c.sendQueueFull = true
 			// Cancel the pacing timer, as we can't send any more packets until the send queue is available again.
 			c.pacingDeadline = 0
 			c.blocked = blockModeHardBlocked
 		} else {
 			sendQueueAvailable = nil
+			c.sendQueueFull = false
 		}
 	}
 
@@ -1061,6 +1074,14 @@ func (c *Conn) handleHandshakeConfirmed(now monotime.Time) error {
 const maxPacketsToProcess = 32
 
 func (c *Conn) handlePackets() (wasProcessed bool, _ error) {
+	// An ACK due goes before the next packet is taken (quic.ack_sent_after
+	// packet): while it waits for room in the send queue, so do the
+	// packets, as Chrome writes its ACK at once. The run loop wakes when the
+	// queue has room, and sends it before it comes back here; a queue that
+	// has room by now still waits for the loop to send.
+	if c.acksAfterPacket && c.receivedPacketHandler.AckQueued() && c.sendQueueFull {
+		return false, nil
+	}
 	// Process packets from the receivedPackets queue.
 	// Limit the number of packets to process to maxPacketsToProcess,
 	// so we eventually get a chance to send out an ACK when receiving a lot of packets.
@@ -1095,6 +1116,11 @@ func (c *Conn) handlePackets() (wasProcessed bool, _ error) {
 		// Prioritize sending of new CRYPTO data.
 		// This is especially relevant when processing 0-RTT packets.
 		if !c.handshakeComplete && (c.initialStream.HasData() || c.handshakeStream.HasData()) {
+			break
+		}
+		// an ACK due goes before the next packet is taken, as the profile
+		// says (quic.ack_sent_after packet)
+		if c.acksAfterPacket && c.receivedPacketHandler.AckQueued() {
 			break
 		}
 	}
