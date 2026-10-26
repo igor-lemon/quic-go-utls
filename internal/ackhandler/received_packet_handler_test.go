@@ -183,6 +183,27 @@ func TestHandshakePacketsAreAcknowledgedWithinTheirDelayAsChromeDoes(t *testing.
 	require.True(t, h.GetAlarmTimeout().IsZero())
 }
 
+func TestOnlyTheApplicationDataACKAlarmTakesTheSlack(t *testing.T) {
+	h := NewReceivedPacketHandler(utils.DefaultLogger)
+	h.SetMaxAckDelay(24 * time.Millisecond)
+	h.SetHandshakeAckDelay(time.Millisecond)
+	h.SetAlarmSlack(4 * time.Millisecond)
+	now := monotime.Now()
+	// the Initial and Handshake alarms within their millisecond
+	for _, level := range []protocol.EncryptionLevel{protocol.EncryptionInitial, protocol.EncryptionHandshake} {
+		require.NoError(t, h.ReceivedPacket(0, protocol.ECNNon, level, now, true), level.String())
+		require.Equal(t, now.Add(time.Millisecond), h.GetAlarmTimeout(), level.String())
+		require.NotNil(t, h.GetAckFrame(level, now.Add(time.Millisecond), true), level.String())
+	}
+	// the 1-RTT one its slack after its delay
+	require.NoError(t, h.ReceivedPacket(0, protocol.ECNNon, protocol.Encryption1RTT, now, true))
+	require.Equal(t, now.Add(28*time.Millisecond), h.GetAlarmTimeout())
+	require.Nil(t, h.GetAckFrame(protocol.Encryption1RTT, now.Add(28*time.Millisecond-1), true))
+	ack := h.GetAckFrame(protocol.Encryption1RTT, now.Add(28*time.Millisecond), true)
+	require.NotNil(t, ack)
+	require.Equal(t, 28*time.Millisecond, ack.DelayTime)
+}
+
 func TestADelayedHandshakeSpaceDroppedTakesNoPacket(t *testing.T) {
 	h := NewReceivedPacketHandler(utils.DefaultLogger)
 	h.SetHandshakeAckDelay(time.Millisecond)

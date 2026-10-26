@@ -61,12 +61,18 @@ func TestAClientConnectionTakesItsProfilesPolicies(t *testing.T) {
 	require.NoError(t, c.receivedPacketHandler.ReceivedPacket(0, protocol.ECNNon, protocol.EncryptionInitial, now, true))
 	require.Nil(t, c.receivedPacketHandler.GetAckFrame(protocol.EncryptionInitial, now, true))
 	require.NotNil(t, c.receivedPacketHandler.GetAckFrame(protocol.EncryptionInitial, now.Add(time.Millisecond), true))
+	// a lone 1-RTT packet's ACK the alarm's slack after its delay, the
+	// profile's 24 ms
+	require.NoError(t, c.receivedPacketHandler.ReceivedPacket(0, protocol.ECNNon, protocol.Encryption1RTT, now, true))
+	require.Equal(t, now.Add(32*time.Millisecond), c.receivedPacketHandler.GetAlarmTimeout())
 	// quic-go's, without the profile
 	tc = newClientTestConnection(t, nil, &Config{DisablePathMTUDiscovery: true}, false)
 	pn, _ = tc.conn.sentPacketHandler.PeekPacketNumber(protocol.EncryptionInitial)
 	require.Zero(t, pn)
 	require.Nil(t, tc.conn.initialStream.chaos)
 	require.Zero(t, tc.conn.alarmSlack())
+	require.NoError(t, tc.conn.receivedPacketHandler.ReceivedPacket(0, protocol.ECNNon, protocol.Encryption1RTT, now, true))
+	require.Equal(t, now.Add(protocol.MaxAckDelay), tc.conn.receivedPacketHandler.GetAlarmTimeout())
 }
 
 func TestAServersAlarmsAreOnTime(t *testing.T) {
@@ -76,6 +82,9 @@ func TestAServersAlarmsAreOnTime(t *testing.T) {
 	tc := newServerTestConnection(t, mockCtrl, &Config{Behavior: chromeConnPolicy(t), DisablePathMTUDiscovery: true}, false,
 		connectionOptSentPacketHandler(sph))
 	require.Zero(t, tc.conn.alarmSlack(), "the slack is a client's, Chrome's network thread's")
+	now := monotime.Now()
+	require.NoError(t, tc.conn.receivedPacketHandler.ReceivedPacket(0, protocol.ECNNon, protocol.Encryption1RTT, now, true))
+	require.Equal(t, now.Add(protocol.MaxAckDelay), tc.conn.receivedPacketHandler.GetAlarmTimeout(), "its ACK alarm on time")
 	// and its idle connection ends silently, whatever the profile says and
 	// however many probes went unanswered
 	tc.conn.closeIdle(time.Second)

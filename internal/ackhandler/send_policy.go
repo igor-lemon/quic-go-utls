@@ -28,8 +28,9 @@ type SendPolicy struct {
 	SkipInEverySpace bool
 	// Probes are the probe packets a probe timeout sends; 0 is two.
 	Probes int
-	// AlarmSlack is how late the loss detection alarm fires: Chrome's
-	// network thread runs an alarm when its timer's leeway has passed.
+	// AlarmSlack is how late the loss detection alarm fires: the kernel
+	// coalesces the timer of Chrome's network thread (on macOS by up to a
+	// quarter of its interval, 5 ms at most, at its latency tier).
 	AlarmSlack time.Duration
 }
 

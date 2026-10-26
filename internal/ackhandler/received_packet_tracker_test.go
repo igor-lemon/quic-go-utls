@@ -102,6 +102,29 @@ func TestAppDataReceivedPacketTrackerAlarmTimeout(t *testing.T) {
 	require.Zero(t, tr.GetAlarmTimeout())
 }
 
+func TestAppDataReceivedPacketTrackerAlarmFiresItsSlackLate(t *testing.T) {
+	tr := newAppDataReceivedPacketTracker(utils.DefaultLogger)
+	tr.maxAckDelay = 24 * time.Millisecond
+	tr.alarmSlack = 4 * time.Millisecond
+
+	// a lone packet is acknowledged when the alarm fires, its slack after
+	// the delay, and the ACK says how long it waited
+	now := monotime.Now()
+	require.NoError(t, tr.ReceivedPacket(1, protocol.ECNNon, now, true))
+	require.Equal(t, now.Add(28*time.Millisecond), tr.GetAlarmTimeout())
+	require.Nil(t, tr.GetAckFrame(now.Add(28*time.Millisecond-1), true))
+	ack := tr.GetAckFrame(now.Add(28*time.Millisecond), true)
+	require.NotNil(t, ack)
+	require.Equal(t, 28*time.Millisecond, ack.DelayTime)
+	require.Zero(t, tr.GetAlarmTimeout())
+
+	// a second one is acknowledged at once, whatever the slack
+	require.NoError(t, tr.ReceivedPacket(2, protocol.ECNNon, now, true))
+	require.Nil(t, tr.GetAckFrame(now, true))
+	require.NoError(t, tr.ReceivedPacket(3, protocol.ECNNon, now, true))
+	require.NotNil(t, tr.GetAckFrame(now, true))
+}
+
 func TestAppDataReceivedPacketTrackerQueuesECNCE(t *testing.T) {
 	tr := newAppDataReceivedPacketTracker(utils.DefaultLogger)
 

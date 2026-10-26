@@ -602,6 +602,7 @@ func (c *Conn) preSetup() {
 		if pol.Has("quic.ack_timer_ms") {
 			c.receivedPacketHandler.SetMaxAckDelay(time.Duration(pol.Uint("quic.ack_timer_ms")) * time.Millisecond)
 		}
+		c.receivedPacketHandler.SetAlarmSlack(c.alarmSlack())
 		c.receivedPacketHandler.SetHandshakeAckDelay(time.Duration(pol.Uint("quic.handshake_ack_timer_ms")) * time.Millisecond)
 		c.rttStats.SetPTOPolicy(ptoPolicyOf(pol))
 	}

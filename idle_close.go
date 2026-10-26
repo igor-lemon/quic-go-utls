@@ -19,7 +19,7 @@ func (e *idleClose) Temporary() bool { return false }
 func (e *idleClose) Unwrap() []error { return []error{qerr.ErrIdleTimeout, e.close} }
 
 // alarmSlack is how late a client's alarms fire, as the profile says
-// (quic.alarm_slack_ms).
+// (quic.alarm_slack_ms): its loss detection, idle and 1-RTT ACK alarms.
 func (c *Conn) alarmSlack() time.Duration {
 	if c.perspective != protocol.PerspectiveClient {
 		return 0
