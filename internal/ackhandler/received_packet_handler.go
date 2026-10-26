@@ -50,6 +50,38 @@ func (h *ReceivedPacketHandler) SetAlarmSlack(slack time.Duration) {
 	h.appDataPackets.alarmSlack = slack
 }
 
+// SetAlarmSlackPercent has the application-data ACK alarm fire no later
+// than percent of its delay after it, its slack at most: a kernel that
+// coalesces timers makes one late by a part of how long it waits, which a
+// short delay of ACK decimation shows. It is called before any packet is
+// received; 0 leaves the slack whole.
+func (h *ReceivedPacketHandler) SetAlarmSlackPercent(percent int) {
+	h.appDataPackets.slackPercent = percent
+}
+
+// SetAckDecimation has the application data's packets acknowledged as d
+// says once the peer has sent many (quiche's ACK decimation). It is called
+// before any packet is received.
+func (h *ReceivedPacketHandler) SetAckDecimation(d AckDecimation) {
+	h.appDataPackets.decimation = &d
+}
+
+// SetGapPackets has each of the first packets ack-eliciting packets after
+// a gap in the application data's packets acknowledged at once, while the
+// highest range holds no more (quiche's HasNewMissingPackets,
+// kMaxPacketsAfterNewMissing), where quic-go acknowledges a gap at once
+// only when it is new. It is called before any packet is received; 0 keeps
+// quic-go's rule.
+func (h *ReceivedPacketHandler) SetGapPackets(packets int) {
+	h.appDataPackets.gapPackets = packets
+}
+
+// AckQueued says whether an ACK of the application data's packets is due
+// now, not on its alarm.
+func (h *ReceivedPacketHandler) AckQueued() bool {
+	return h.appDataPackets.ackQueued
+}
+
 // SetHandshakeAckDelay has the Initial and Handshake packets acknowledged
 // within delay, as quiche does with its alarm's granularity (its
 // UberReceivedPacketManager), not at once: a client whose handshake ends

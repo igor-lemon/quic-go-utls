@@ -75,3 +75,13 @@ func TestConnectionFlowControllerResetAfterReading(t *testing.T) {
 	fc.AddBytesRead(1)
 	require.EqualError(t, fc.Reset(), "flow controller reset after reading data")
 }
+
+func TestConnectionFlowControllerSaysItsReceiveWindowAsItStands(t *testing.T) {
+	fc := NewConnectionFlowController(100, 100, nil, utils.NewRTTStats(), utils.DefaultLogger)
+	require.Equal(t, protocol.ByteCount(100), fc.ReceiveWindow(), "the initial window")
+	// reading moves it only once a window update is taken
+	fc.AddBytesRead(99)
+	require.Equal(t, protocol.ByteCount(100), fc.ReceiveWindow())
+	require.Equal(t, protocol.ByteCount(199), fc.GetWindowUpdate(monotime.Now()))
+	require.Equal(t, protocol.ByteCount(199), fc.ReceiveWindow())
+}

@@ -34,6 +34,10 @@ type ConnectionFlowController interface {
 	AddBytesRead(protocol.ByteCount) (hasWindowUpdate bool)
 	Reset() error
 	IsNewlyBlocked() (bool, protocol.ByteCount)
+	// ReceiveWindow is the offset the peer may send the connection's data
+	// up to, the last MAX_DATA given or the initial one (quiche's
+	// receive_window_offset_)
+	ReceiveWindow() protocol.ByteCount
 }
 
 type connectionFlowControllerI interface {

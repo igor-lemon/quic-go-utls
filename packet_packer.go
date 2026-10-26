@@ -137,6 +137,14 @@ type packetPacker struct {
 	rand                rand.Rand
 
 	numNonAckElicitingAcks int
+	// ackOnlyMax is how many packets carrying an ACK and nothing
+	// ack-eliciting go in a row (quic.ack_only_max; quic-go's
+	// MaxNonAckElicitingAcks); the next is made ack-eliciting by a PING, or
+	// with maxData (quic.ack_only_frame max-data) by a MAX_DATA of the
+	// connection's receive window as it stands, as quiche's
+	// OnAckNeedsRetransmittableFrame has its flow controller send
+	ackOnlyMax int
+	maxData    func() protocol.ByteCount
 
 	// A client's profile (setPolicy): planPackets tells the packet number
 	// manager of each packet of a datagram before the next is numbered
@@ -163,6 +171,9 @@ func (p *packetPacker) setPolicy(pol behavior.Policy) {
 	p.padAtEnd = pol.Text("quic.padding_position") == "end"
 	p.chaos = chaosOf(pol)
 	p.earlyApplication = pol.Text("quic.close_early_application") == "application"
+	if pol.Has("quic.ack_only_max") {
+		p.ackOnlyMax = pol.Int("quic.ack_only_max")
+	}
 }
 
 // plan tells the packet number manager a packet of size bytes before its
@@ -194,6 +205,7 @@ func newPacketPacker(
 	opportunistic, _ := framer.(interface{ BundleOpportunistically() bool })
 	return &packetPacker{
 		opportunistic:       opportunistic,
+		ackOnlyMax:          protocol.MaxNonAckElicitingAcks,
 		cryptoSetup:         cryptoSetup,
 		getDestConnID:       getDestConnID,
 		srcConnID:           srcConnID,
@@ -661,10 +673,14 @@ func (p *packetPacker) maybeGetAppDataPacket(
 			return payload{}
 		}
 		// the packet only contains an ACK
-		if p.numNonAckElicitingAcks >= protocol.MaxNonAckElicitingAcks {
-			ping := &wire.PingFrame{}
-			pl.frames = append(pl.frames, ackhandler.Frame{Frame: ping})
-			pl.length += ping.Length(v)
+		if p.numNonAckElicitingAcks >= p.ackOnlyMax {
+			f := ackhandler.Frame{Frame: &wire.PingFrame{}}
+			if p.maxData != nil {
+				f = ackhandler.Frame{Frame: &wire.MaxDataFrame{MaximumData: p.maxData()},
+					Handler: p.retransmissionQueue.AckHandler(protocol.Encryption1RTT)}
+			}
+			pl.frames = append(pl.frames, f)
+			pl.length += f.Frame.Length(v)
 			p.numNonAckElicitingAcks = 0
 		} else {
 			p.numNonAckElicitingAcks++
