@@ -49,6 +49,10 @@ type ReceiveStream struct {
 	readOnce chan struct{} // cap: 1, to protect against concurrent use of Read
 	deadline monotime.Time
 
+	// resetHandler is called as a RESET_STREAM of the peer is taken
+	// (Stream.SetResetHandler)
+	resetHandler func(finReceived bool)
+
 	flowController flowcontrol.StreamFlowController
 }
 
@@ -316,10 +320,17 @@ func (s *ReceiveStream) handleStreamFrameImpl(frame *wire.StreamFrame, now monot
 
 func (s *ReceiveStream) handleResetStreamFrame(frame *wire.ResetStreamFrame, now monotime.Time) error {
 	s.mutex.Lock()
+	finReceived := s.finalOffset != protocol.MaxByteCount
+	wasReset := s.cancelledRemotely
 	err := s.handleResetStreamFrameImpl(frame, now)
+	reset := !wasReset && s.cancelledRemotely
+	handler := s.resetHandler
 	completed := s.isNewlyCompleted()
 	s.mutex.Unlock()
 
+	if reset && handler != nil {
+		handler(finReceived)
+	}
 	if completed {
 		s.sender.onStreamCompleted(s.streamID)
 	}

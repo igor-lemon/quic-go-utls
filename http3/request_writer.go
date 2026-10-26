@@ -35,6 +35,9 @@ type requestWriter struct {
 	pseudoHeaderOrder []string
 	priorityParam     uint32
 	beforeHeaders     func(*http.Request, quic.StreamID) error
+	// instructions writes the dynamic encoder's instructions, whose writing
+	// a request whose writes are bundled waits for before its HEADERS
+	instructions *qpackInstructionWriter
 }
 
 func newRequestWriter() *requestWriter {
@@ -65,6 +68,15 @@ func newRequestWriterWithPseudoHeaderOrder(pseudoHeaderOrder []string, priorityP
 }
 
 func (w *requestWriter) WriteRequestHeader(wr io.Writer, req *http.Request, gzip bool, streamID quic.StreamID, qlogger qlogwriter.Recorder) error {
+	return w.writeRequestHeader(wr, req, gzip, streamID, qlogger, nil)
+}
+
+// writeRequestHeader writes the request's HEADERS. With a write bundle, it
+// waits for the QPACK encoder's instructions of the request to be written
+// first, as quiche's WriteHeaders writes them before the HEADERS under the
+// same flush, unless the encoder stream had others to write before them, or
+// is still to be opened, or the bundle spills.
+func (w *requestWriter) writeRequestHeader(wr io.Writer, req *http.Request, gzip bool, streamID quic.StreamID, qlogger qlogwriter.Recorder, bundle *quic.WriteBundle) error {
 	if w.beforeHeaders != nil {
 		if err := w.beforeHeaders(req, streamID); err != nil {
 			return err
@@ -72,8 +84,12 @@ func (w *requestWriter) WriteRequestHeader(wr io.Writer, req *http.Request, gzip
 	}
 	// TODO: figure out how to add support for trailers
 	buf := &bytes.Buffer{}
-	if err := w.writeHeaders(buf, req, gzip, streamID, qlogger); err != nil {
+	written, err := w.writeHeaders(buf, req, gzip, streamID, qlogger)
+	if err != nil {
 		return err
+	}
+	if bundle != nil && written > 0 {
+		w.instructions.waitWritten(req.Context(), written, bundle.Spilled())
 	}
 	if _, err := wr.Write(buf.Bytes()); err != nil {
 		return err
@@ -83,7 +99,11 @@ func (w *requestWriter) WriteRequestHeader(wr io.Writer, req *http.Request, gzip
 	return nil
 }
 
-func (w *requestWriter) writeHeaders(wr io.Writer, req *http.Request, gzip bool, streamID quic.StreamID, qlogger qlogwriter.Recorder) error {
+// writeHeaders writes the request's HEADERS frame to wr. It says how many
+// items the encoder's instruction writer must have written before the frame
+// goes, when the encoder queued some to a writer with nothing else to write
+// and a stream to write them on; 0 otherwise.
+func (w *requestWriter) writeHeaders(wr io.Writer, req *http.Request, gzip bool, streamID quic.StreamID, qlogger qlogwriter.Recorder) (uint64, error) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 	defer w.encoder.Close()
@@ -98,13 +118,24 @@ func (w *requestWriter) writeHeaders(wr io.Writer, req *http.Request, gzip bool,
 	w.collected = nil
 	headerFields, err := w.encodeHeaders(req, gzip, "", actualContentLength(req), qlogger != nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
+	var written uint64
 	if w.dynamic != nil {
+		var before uint64
+		idle := false
+		if w.instructions != nil {
+			before, idle = w.instructions.mark()
+		}
 		encoded, e := w.dynamic.encode(uint64(streamID), w.collected)
 		if e != nil {
-			return e
+			return 0, e
+		}
+		if idle && w.instructions.ready() {
+			if after, _ := w.instructions.mark(); after > before {
+				written = after
+			}
 		}
 		w.headerBuf.Reset()
 		w.headerBuf.Write(encoded)
@@ -115,10 +146,10 @@ func (w *requestWriter) writeHeaders(wr io.Writer, req *http.Request, gzip bool,
 		qlogCreatedHeadersFrame(qlogger, streamID, len(b)+w.headerBuf.Len(), w.headerBuf.Len(), headerFields)
 	}
 	if _, err := wr.Write(b); err != nil {
-		return err
+		return 0, err
 	}
 	_, err = wr.Write(w.headerBuf.Bytes())
-	return err
+	return written, err
 }
 
 func isExtendedConnectRequest(req *http.Request) bool {
