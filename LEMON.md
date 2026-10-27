@@ -177,3 +177,5 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   SETTINGS ordering, request cancellation and Close under flow control.
   GREASE lengths/settings are unchanged data;1452 is protocol.MaxPacketBufferSize,
   not a browser threshold. Large finite policies no longer deadlock the run loop.
+
+A6 coordinated dependency also preserves an explicitly configured zero HTTP2 connection increment (fhttp e44d38f). No QUIC runtime changes in this pin.
