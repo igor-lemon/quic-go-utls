@@ -12,6 +12,7 @@ import (
 	"github.com/igor-lemon/quic-go-utls/internal/protocol"
 	"github.com/igor-lemon/quic-go-utls/internal/qerr"
 	"github.com/igor-lemon/quic-go-utls/internal/wire"
+	"github.com/igor-lemon/utls/behavior"
 )
 
 const disableClientHelloScramblingEnv = "QUIC_GO_DISABLE_CLIENTHELLO_SCRAMBLING"
@@ -133,6 +134,14 @@ func newInitialCryptoStream(isClient bool) *initialCryptoStream {
 		s.cuts[i].end = protocol.InvalidByteCount
 	}
 	return s
+}
+
+// setPolicy gives an explicit JSON layout priority over the legacy ambient
+// scrambling override. A bare fork caller without a policy retains its opt-out.
+func (s *initialCryptoStream) setPolicy(p behavior.Policy) {
+	if p.Has("quic.initial_layout") {
+		s.scramble = p.Text("quic.initial_layout") == "scramble"
+	}
 }
 
 func (s *initialCryptoStream) HasData() bool {
