@@ -164,3 +164,9 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   killed but one equivalent (`sendQueueFull` set again where the loop finds
   the queue still full before sending: the queue fills only in
   `triggerSending`, after which the loop says so).
+
+- A6 prerequisite: the Go1.25+ self-integration adapter reads uTLS's actual
+  testingOnlyCurveID numeric ConnectionState witness with reflect (no unsafe),
+  since the fork has no public CurveID. Missing/type-changed state fails hard.
+  Existing P-384 and X25519MLKEM768 handshake-drop assertions remain unchanged;
+  no production API or fabricated group is introduced.
