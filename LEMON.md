@@ -170,3 +170,10 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   since the fork has no public CurveID. Missing/type-changed state fails hard.
   Existing P-384 and X25519MLKEM768 handshake-drop assertions remain unchanged;
   no production API or fabricated group is introduced.
+
+- A6: the initial HTTP3 control stream queues at most the existing QUIC packet
+  buffer on the handshake run loop. setupConn writes the rest in its goroutine
+  before publishing setupComplete, preserving small with-Finished composition,
+  SETTINGS ordering, request cancellation and Close under flow control.
+  GREASE lengths/settings are unchanged data;1452 is protocol.MaxPacketBufferSize,
+  not a browser threshold. Large finite policies no longer deadlock the run loop.
