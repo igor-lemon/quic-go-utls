@@ -8,8 +8,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
-github.com/igor-lemon/fhttp v0.6.10-0.20261027200449-86ce408c88ff h1:sFGbCJqP4BQB7pVACWHgkR2wnDM02tQX8QP2WHHnQ7c=
-github.com/igor-lemon/fhttp v0.6.10-0.20261027200449-86ce408c88ff/go.mod h1:OhEISWmTJyk462YQ834+Beq6lw2m+5pEAeCf/qxYktI=
+github.com/igor-lemon/fhttp v0.6.10-0.20261027200732-6ccf73f64cb3 h1:3sIaiogGZ1vjfmKkg3ViZ8yDzdTVGxTfIvCGPZdOv/c=
+github.com/igor-lemon/fhttp v0.6.10-0.20261027200732-6ccf73f64cb3/go.mod h1:OhEISWmTJyk462YQ834+Beq6lw2m+5pEAeCf/qxYktI=
 github.com/igor-lemon/utls v1.7.8-barnius.0.20261027190147-856ef601ebd9 h1:Di1dzbPG7h08a8QphEORBnsGAm/gi6D6DLbA6Vk/b5E=
 github.com/igor-lemon/utls v1.7.8-barnius.0.20261027190147-856ef601ebd9/go.mod h1:2XKENhNpqHSvQA4rB7ccoJI8y/fTD98P+Nl82juLl6U=
 github.com/jordanlewis/gcassert v0.0.0-20250430164644-389ef753e22e h1:a+PGEeXb+exwBS3NboqXHyxarD9kaboBbrSp+7GuBuc=
