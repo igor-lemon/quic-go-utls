@@ -1,6 +1,8 @@
 package quic
 
 import (
+	"encoding/json"
+	"github.com/igor-lemon/utls/behavior"
 	"os"
 	"strconv"
 	"testing"
@@ -191,4 +193,21 @@ func TestInitialCryptoStreamClientStatic(t *testing.T) {
 
 	reassembled := reassembleCryptoData(t, segments)
 	require.Equal(t, append(clientHello, []byte("foobar")...), reassembled)
+}
+
+func TestInitialLayoutPolicyOverridesEnvironment(t *testing.T) {
+	for _, env := range []string{"true", "false", "invalid"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(disableClientHelloScramblingEnv, env)
+			for _, layout := range []string{"scramble", "chaos"} {
+				stream := newInitialCryptoStream(true)
+				stream.setPolicy(behavior.Policy{"quic.initial_layout": json.RawMessage(`"` + layout + `"`)})
+				require.Equal(t, layout == "scramble", stream.scramble)
+			}
+			bare := newInitialCryptoStream(true)
+			before := bare.scramble
+			bare.setPolicy(nil)
+			require.Equal(t, before, bare.scramble)
+		})
+	}
 }
