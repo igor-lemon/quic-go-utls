@@ -19,6 +19,7 @@ import (
 
 	"github.com/igor-lemon/quic-go-utls"
 	"github.com/igor-lemon/quic-go-utls/http3/qlog"
+	"github.com/igor-lemon/quic-go-utls/internal/protocol"
 	"github.com/igor-lemon/quic-go-utls/quicvarint"
 
 	"github.com/quic-go/qpack"
@@ -57,10 +58,11 @@ type ClientConn struct {
 
 	// Requests wait until the local control stream preface and SETTINGS are queued.
 	// This is a protocol ordering barrier, independent of browser policy.
-	setupComplete chan struct{}
-	setupErr      error
-	controlStream *quic.SendStream
-	controlWrite  chan struct{}
+	setupComplete  chan struct{}
+	setupErr       error
+	controlStream  *quic.SendStream
+	controlPending []byte
+	controlWrite   chan struct{}
 
 	// Enable support for HTTP/3 datagrams (RFC 9297).
 	// If a QUICConfig is set, datagram support also needs to be enabled on the QUIC layer by setting enableDatagrams.
@@ -227,6 +229,11 @@ func (c *ClientConn) setupConn(opened bool, err error) error {
 	if !opened {
 		err = c.openControlStream()
 	}
+	pending := c.controlPending
+	c.controlPending = nil
+	if err == nil && len(pending) > 0 {
+		_, err = c.controlStream.Write(pending)
+	}
 	if err == nil {
 		switch c.behavior.Text("h3.qpack.streams") {
 		case "eager":
@@ -240,8 +247,10 @@ func (c *ClientConn) setupConn(opened bool, err error) error {
 
 // openControlStream opens the control stream and writes what it begins with:
 // its type, the SETTINGS, and the frames h3.control_order puts after them.
-// It waits for nothing: the stream is opened only where the server allows
-// one, and so little is written that the stream keeps it all for sending.
+// It never waits for flow-controlled I/O on the connection's run loop. The
+// first packet buffer is queued inline; any remainder is written by setupConn's
+// goroutine before publishing the local SETTINGS barrier. Small prefixes retain
+// their existing Finished composition; large valid policies cannot deadlock it.
 func (c *ClientConn) openControlStream() error {
 	if c.additionalSettings[1] > qpackTableSafetyLimit || c.additionalSettings[7] > qpackBlockedSafetyLimit {
 		return errors.New("QPACK settings exceed engine safety bounds")
@@ -291,7 +300,11 @@ func (c *ClientConn) openControlStream() error {
 	}
 	c.controlStream = str
 
-	_, err = str.Write(b)
+	first := min(len(b), int(protocol.MaxPacketBufferSize))
+	if first < len(b) {
+		c.controlPending = b[first:]
+	}
+	_, err = str.Write(b[:first])
 	return err
 }
 
