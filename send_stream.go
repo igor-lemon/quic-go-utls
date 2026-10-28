@@ -157,6 +157,9 @@ func (s *SendStream) write(p []byte) (bool /* is newly completed */, int, error)
 			if s.nextFrame != nil {
 				s.wroteAt += s.nextFrame.DataLen()
 			}
+			if !notifiedSender {
+				s.heldFromHere()
+			}
 			if s.nextFrame == nil {
 				f := wire.GetStreamFrame()
 				f.Offset = s.writeOffset
@@ -452,6 +455,8 @@ func (s *SendStream) Close() error {
 	cancelled := s.resetErr != nil
 	if cancelled {
 		s.cancellationFlagged = true
+	} else {
+		s.heldFromHere()
 	}
 	completed := s.isNewlyCompleted()
 	s.mutex.Unlock()

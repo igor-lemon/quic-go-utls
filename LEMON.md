@@ -179,3 +179,20 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   not a browser threshold. Large finite policies no longer deadlock the run loop.
 
 A6 coordinated dependency also preserves an explicitly configured zero HTTP2 connection increment (fhttp e44d38f). No QUIC runtime changes in this pin.
+
+- Review problem 10 (2026-10-28): http3's TestARequestsWritesGoInOnePacket
+  AsItsProfileSays failed once in the F09 gate, the request's first packet
+  [10 0] without its PRIORITY_UPDATE. A Write put its data where a packet
+  could take it, let go of the stream's mutex, and only then did
+  onHasStreamData hold the stream for the open write bundle (holdBack). A
+  stream still in the framer's queue for what it was given before (a control
+  stream whose SETTINGS a request found queued but unsent, as the local
+  SETTINGS barrier lets a request go as soon as they are queued) could be
+  packed in between: the PRIORITY_UPDATE went with the SETTINGS. A Write or
+  Close now holds itself while a bundle is open, under the mutex that gives
+  the data (heldFromHere, by the sender's writeBundles); hold lets such a
+  stream go when the bundle closed or spilled before it got there. Not for a
+  waited Write's remainder (its bundle spilled), nor a reset stream's Close.
+  TestWhatABundleIsGivenIsHeldBeforeAPacketCanTakeIt packs in that window,
+  deterministically; TestAWriteThatWaitedIsNotHeldForWhatItGivesLast; seven
+  mutants, all killed.

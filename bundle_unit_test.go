@@ -3,6 +3,7 @@ package quic
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/igor-lemon/quic-go-utls/internal/ackhandler"
 	"github.com/igor-lemon/quic-go-utls/internal/flowcontrol"
@@ -399,4 +400,155 @@ func TestAHeldStreamSendsWhatItWasGivenBeforeItsBundle(t *testing.T) {
 	require.Equal(t, []byte("abc"), f.Data)
 	str.holdBack()
 	require.Equal(t, protocol.ByteCount(3), str.heldAt)
+}
+
+// packingSender is a connection that, while packs, packs a packet whenever a
+// stream tells it it has something, before it holds the stream, as its run
+// loop may when the stream is in its queue for what it was given before;
+// first runs before that, and took is what the packets took.
+type packingSender struct {
+	c     *Conn
+	packs bool
+	first func()
+	took  []*wire.StreamFrame
+}
+
+func (*packingSender) onHasConnectionData()                                                {}
+func (*packingSender) onHasStreamControlFrame(protocol.StreamID, streamControlFrameGetter) {}
+func (*packingSender) onStreamCompleted(protocol.StreamID)                                 {}
+func (s *packingSender) writeBundles() *bundling                                           { return &s.c.bundling }
+
+func (s *packingSender) onHasStreamData(id protocol.StreamID, str *SendStream) {
+	if s.first != nil {
+		s.first()
+	}
+	if !s.packs {
+		s.c.onHasStreamData(id, str)
+		return
+	}
+	if f, _, _ := str.popStreamFrame(protocol.MaxByteCount, protocol.Version1); f.Frame != nil {
+		s.took = append(s.took, f.Frame)
+	}
+	s.c.onHasStreamData(id, str)
+}
+
+func packing() (*Conn, *packingSender) {
+	c := &Conn{framer: newFramer(flowcontrol.NewConnectionFlowController(0, 0, nil, nil, nil)), sendingScheduled: make(chan struct{}, 1)}
+	return c, &packingSender{c: c}
+}
+
+func popped(t *testing.T, str *SendStream) *wire.StreamFrame {
+	t.Helper()
+	f, _, _ := str.popStreamFrame(protocol.MaxByteCount, protocol.Version1)
+	return f.Frame
+}
+
+func TestWhatABundleIsGivenIsHeldBeforeAPacketCanTakeIt(t *testing.T) {
+	// a control stream's SETTINGS still to go when the request's bundle
+	// opens: a packet packed before the PRIORITY_UPDATE's hold takes the
+	// SETTINGS alone
+	c, s := packing()
+	str := newSendStream(context.Background(), 2, s, testFlowController(2), false)
+	_, err := str.Write([]byte("settings"))
+	require.NoError(t, err)
+	s.packs = true
+	bundle := c.BundleWrites()
+	_, err = str.Write([]byte("priority"))
+	require.NoError(t, err)
+	require.Len(t, s.took, 1)
+	require.Equal(t, []byte("settings"), s.took[0].Data)
+	// and what the bundle gives it after is held from where the bundle
+	// began, not from where that began
+	_, err = str.Write([]byte("more"))
+	require.NoError(t, err)
+	require.Len(t, s.took, 1)
+	require.Nil(t, popped(t, str))
+	bundle.Flush()
+	require.Equal(t, []byte("prioritymore"), popped(t, str).Data)
+
+	// its FIN, given while held: the data before it goes, the FIN after
+	c, s = packing()
+	str = newSendStream(context.Background(), 0, s, testFlowController(0), false)
+	_, err = str.Write([]byte("abc"))
+	require.NoError(t, err)
+	s.packs = true
+	bundle = c.BundleWrites()
+	require.NoError(t, str.Close())
+	require.Len(t, s.took, 1)
+	require.Equal(t, []byte("abc"), s.took[0].Data)
+	require.False(t, s.took[0].Fin)
+	bundle.Flush()
+	require.True(t, popped(t, str).Fin)
+
+	// a bundle flushed before the stream was held: nothing stays held
+	c, s = packing()
+	s.packs = true
+	str = newSendStream(context.Background(), 2, s, testFlowController(2), false)
+	bundle = c.BundleWrites()
+	s.first = bundle.Flush
+	_, err = str.Write([]byte("late"))
+	require.NoError(t, err)
+	require.Len(t, s.took, 0)
+	require.False(t, str.held)
+	require.Equal(t, []byte("late"), popped(t, str).Data)
+
+	// a bundle that spilled before the stream was held: nothing stays held
+	c, s = packing()
+	s.packs = true
+	str = newSendStream(context.Background(), 2, s, testFlowController(2), false)
+	waiting := newSendStream(context.Background(), 6, &quietSender{}, testFlowController(6), false)
+	waiting.dataForWriting = []byte("x")
+	bundle = c.BundleWrites()
+	s.first = func() { require.False(t, c.bundling.hold(6, waiting, c.framer)) }
+	_, err = str.Write([]byte("spilled"))
+	require.NoError(t, err)
+	require.False(t, str.held)
+	require.Equal(t, []byte("spilled"), popped(t, str).Data)
+	bundle.Flush()
+
+	// a stream reset before its Close is not held for it
+	c, s = packing()
+	str = newSendStream(context.Background(), 0, s, testFlowController(0), false)
+	bundle = c.BundleWrites()
+	str.CancelWrite(1)
+	require.Error(t, str.Close())
+	require.False(t, str.held)
+	bundle.Flush()
+}
+
+func TestAWriteThatWaitedIsNotHeldForWhatItGivesLast(t *testing.T) {
+	// a write larger than a stream keeps for sending spills the bundle and
+	// waits; what it gives last, once it may, goes as the rest did
+	c, s := packing()
+	str := newSendStream(context.Background(), 2, s, testFlowController(2), false)
+	bundle := c.BundleWrites()
+	defer bundle.Flush()
+	data := make([]byte, 3*protocol.MaxPacketBufferSize)
+	done := make(chan error, 1)
+	go func() {
+		_, err := str.Write(data)
+		done <- err
+	}()
+	got := 0
+	deadline := time.Now().Add(5 * time.Second)
+	for got < len(data) {
+		require.True(t, time.Now().Before(deadline), "%d of %d bytes went", got, len(data))
+		// a remainder small enough to keep is left for the writer to take
+		// in, as a packet packed after it ran finds it
+		str.mutex.Lock()
+		keeps := str.dataForWriting != nil && str.canBufferStreamFrame()
+		str.mutex.Unlock()
+		if keeps {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		// as a packet takes it, a packet's worth at a time
+		if f, _, _ := str.popStreamFrame(1200, protocol.Version1); f.Frame != nil {
+			got += len(f.Frame.Data)
+			continue
+		}
+		time.Sleep(time.Millisecond)
+	}
+	require.NoError(t, <-done)
+	require.False(t, str.held)
 }

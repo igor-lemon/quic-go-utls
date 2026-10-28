@@ -86,12 +86,16 @@ func (w *WriteBundle) Spilled() <-chan struct{} { return w.spill }
 // bundles spill.
 func (b *bundling) hold(id protocol.StreamID, str *SendStream, f *framer) bool {
 	if b.open.Load() == 0 {
+		// a Write or Close that held itself while a bundle was open, which
+		// closed before it got here
+		str.letGo()
 		return false
 	}
 	waits := str.writerWaits()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.open.Load() == 0 || b.spilled {
+		str.letGo()
 		return false
 	}
 	if waits {
@@ -127,12 +131,45 @@ func (s *SendStream) writerWaits() bool {
 
 // holdBack has what the stream was given from its latest Write or Close on
 // wait for letGo; what it was given before still goes, a stream's earlier
-// data still to go among it. A packet packed between that Write and this
-// may have taken some of it already, which no hold can call back.
+// data still to go among it. A Write or Close given while a bundle is open
+// held itself already (heldFromHere); one given before the bundle opened
+// may have gone in part, which no hold can call back.
 func (s *SendStream) holdBack() {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	s.held, s.heldAt = true, max(s.wroteAt, s.writeOffset)
+}
+
+// bundleKeeper is a stream's sender that keeps the connection's write
+// bundles: the connection, and the sender of either half of a stream.
+type bundleKeeper interface{ writeBundles() *bundling }
+
+func (c *Conn) writeBundles() *bundling { return &c.bundling }
+
+func (s *uniStreamSender) writeBundles() *bundling {
+	if k, ok := s.streamSender.(bundleKeeper); ok {
+		return k.writeBundles()
+	}
+	return nil
+}
+
+// heldFromHere holds what the latest Write or Close gave, from wroteAt on,
+// while a write bundle is open, before the stream's mutex lets a packet see
+// it. A stream already in the framer's queue, for what it was given before
+// (a control stream's SETTINGS not yet sent, as a connection's first request
+// may find it), was otherwise open to a packet packed between that Write and
+// onHasStreamData's hold: the PRIORITY_UPDATE went in it, without the
+// request it was bundled with. A bundle that closed or spilled meanwhile lets
+// it go in hold. It is called with the mutex held.
+func (s *SendStream) heldFromHere() {
+	if s.held {
+		return
+	}
+	if k, ok := s.sender.(bundleKeeper); ok {
+		if b := k.writeBundles(); b != nil && b.open.Load() > 0 {
+			s.held, s.heldAt = true, s.wroteAt
+		}
+	}
 }
 
 // letGo lets what the stream holds back go.
