@@ -196,3 +196,9 @@ A6 coordinated dependency also preserves an explicitly configured zero HTTP2 con
   TestWhatABundleIsGivenIsHeldBeforeAPacketCanTakeIt packs in that window,
   deterministically; TestAWriteThatWaitedIsNotHeldForWhatItGivesLast; seven
   mutants, all killed.
+  The test itself read what the server heard first: under load loopback
+  reorders, a packet is taken for lost, and its PRIORITY_UPDATE goes again
+  beside the HEADERS of the next one ([0 2], [0 10 2]: 1 in 600 runs, before
+  the fix and after it). It now reads what the client packed (its qlog's
+  packets sent): the first packet with the HEADERS, and whether what it
+  carries of the control stream went before in a packet of its own.

@@ -70,6 +70,21 @@ func (h *packetsBoth) carrying(id quic.StreamID, offset int64) (*quicqlog.Packet
 	return nil, time.Time{}
 }
 
+// sentCarrying is the first packet sent that carries a STREAM frame of id at
+// offset: what a connection packed, whatever the network did with it.
+func (h *packetsBoth) sentCarrying(id quic.StreamID, offset int64) *quicqlog.PacketSent {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i, p := range h.sent {
+		for _, f := range p.Frames {
+			if s, ok := f.Frame.(*quicqlog.StreamFrame); ok && s.StreamID == id && s.Offset == offset {
+				return &h.sent[i]
+			}
+		}
+	}
+	return nil
+}
+
 // resetSent is the packet number the server's RESET_STREAM of id went in.
 func (h *packetsBoth) resetSent(id quic.StreamID) quicqlog.PacketNumber {
 	h.mu.Lock()
@@ -186,15 +201,19 @@ func bundlePolicy(t *testing.T, values map[string]any) behavior.Policy {
 }
 
 // bundleClient is a client connection wearing pol to addr, once it has the
-// server's SETTINGS.
-func bundleClient(t *testing.T, addr string, pol behavior.Policy) *ClientConn {
+// server's SETTINGS; what it sends goes to said, when there is one.
+func bundleClient(t *testing.T, addr string, pol behavior.Policy, said ...*packetsBoth) *ClientConn {
 	t.Helper()
 	tr := &Transport{Behavior: pol, AdditionalSettings: map[uint64]uint64{1: 65536, 7: 100}, PriorityParam: 0xf0700}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cfg := getTLSClientConfig()
 	cfg.NextProtos = []string{NextProtoH3}
-	conn, err := quic.DialAddr(ctx, addr, cfg, &quic.Config{DisablePathMTUDiscovery: true})
+	config := &quic.Config{DisablePathMTUDiscovery: true}
+	for _, recorder := range said {
+		config.Tracer = func(context.Context, bool, quic.ConnectionID) qlogwriter.Trace { return &qlogTrace{recorder: recorder} }
+	}
+	conn, err := quic.DialAddr(ctx, addr, cfg, config)
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.CloseWithError(0, "") })
 	cc := tr.NewClientConn(conn)
@@ -225,13 +244,13 @@ func TestARequestsWritesGoInOnePacketAsItsProfileSays(t *testing.T) {
 		{"as-written", false},
 		{"", false},
 	} {
-		heard := &packetsBoth{}
+		heard, said := &packetsBoth{}, &packetsBoth{}
 		addr := bundleServer(t, heard, answer)
 		values := map[string]any{"h3.request_writes": tc.mode}
 		if tc.mode == "" {
 			values["h3.request_writes"] = nil
 		}
-		cc := bundleClient(t, addr, bundlePolicy(t, values))
+		cc := bundleClient(t, addr, bundlePolicy(t, values), said)
 		// the PRIORITY_UPDATE written, and the request a while after: one
 		// flush holds it
 		priority := cc.requestWriter.beforeHeaders
@@ -249,18 +268,29 @@ func TestARequestsWritesGoInOnePacketAsItsProfileSays(t *testing.T) {
 		require.NoError(t, err, tc.mode)
 		require.Equal(t, 200, res.StatusCode)
 		cancel()
-		headers, _ := heard.carrying(0, 0)
-		require.NotNil(t, headers, tc.mode)
-		ids, fin := streamsOf(headers)
 		encoder, _ := heard.carrying(10, 0)
 		require.NotNil(t, encoder, "%s: no encoder instruction", tc.mode)
+		// what the client packed, and not what the server heard first: a
+		// packet taken for lost, as loopback under load reorders them, goes
+		// again as the next packet is packed, beside what that one carries
+		headers := said.sentCarrying(0, 0)
+		require.NotNil(t, headers, tc.mode)
+		var ids []quic.StreamID
+		var fin bool
+		for _, f := range headers.Frames {
+			if s, ok := f.Frame.(*quicqlog.StreamFrame); ok {
+				ids, fin = append(ids, s.StreamID), s.Fin
+				if s.StreamID == 2 && !tc.together {
+					require.NotEqual(t, headers.Header.PacketNumber, said.sentCarrying(2, s.Offset).Header.PacketNumber,
+						"%s: the PRIORITY_UPDATE waited for the request", tc.mode)
+				}
+			}
+		}
 		if tc.together {
 			// Chrome's: STREAM(2) STREAM(10) STREAM(0, fin)
 			require.Equal(t, []quic.StreamID{2, 10, 0}, ids, tc.mode)
 			require.True(t, fin, "%s: no FIN with the HEADERS", tc.mode)
-			continue
 		}
-		require.NotContains(t, ids, quic.StreamID(2), "%s: the PRIORITY_UPDATE waited for the request", tc.mode)
 	}
 }
 
