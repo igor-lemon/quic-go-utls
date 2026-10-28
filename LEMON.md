@@ -202,3 +202,9 @@ A6 coordinated dependency also preserves an explicitly configured zero HTTP2 con
   the fix and after it). It now reads what the client packed (its qlog's
   packets sent): the first packet with the HEADERS, and whether what it
   carries of the control stream went before in a packet of its own.
+
+- Review A1 (2026-10-28): an HTTP/3 field whose value is invalid is refused
+  with an error that names the field and not its value (`invalid header field
+  value for x-token`), as x/net's HTTP/2 framer says it: the value may be a
+  secret, and the error reaches a caller's logs. `TestRequestHeadersValidation`
+  holds it with a secret value in a row of its own.

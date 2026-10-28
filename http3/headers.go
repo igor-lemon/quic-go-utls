@@ -82,7 +82,8 @@ func parseHeaders(decodeFn qpack.DecodeFunc, isRequest bool, sizeLimit int, head
 			return header{}, fmt.Errorf("header field is not lower-case: %s", h.Name)
 		}
 		if !httpguts.ValidHeaderFieldValue(h.Value) {
-			return header{}, fmt.Errorf("invalid header field value for %s: %q", h.Name, h.Value)
+			// Don't include the value in the error, because it may be sensitive.
+			return header{}, fmt.Errorf("invalid header field value for %s", h.Name)
 		}
 		if h.IsPseudo() {
 			if readFirstRegularHeader {

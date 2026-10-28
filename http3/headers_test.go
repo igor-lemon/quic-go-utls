@@ -161,7 +161,15 @@ func TestRequestHeadersValidation(t *testing.T) {
 			headers: []qpack.HeaderField{
 				{Name: "content", Value: "\n"},
 			},
-			err: `invalid header field value for content: "\n"`,
+			err: `invalid header field value for content`,
+		},
+		{
+			// A field value may be a secret: the error names its field alone.
+			name: "invalid secret field value",
+			headers: []qpack.HeaderField{
+				{Name: "x-token", Value: "s3cret\x00"},
+			},
+			err: `invalid header field value for x-token`,
 		},
 		{
 			name: ":status header field", // :status is a response pseudo header
