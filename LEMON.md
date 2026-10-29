@@ -230,3 +230,14 @@ stand in for Cancellation. Immediate mode may precede the ACK or share an
 immediate ACK; opportunistic mode must share the delayed ACK. A deterministic
 preannounced type and a real delayed-mode negative control retain both rules.
 No production code or browser policy changes in this test correction.
+
+## Corrupt-packet recovery test budget (2026-10-29)
+
+Five deterministically corrupted Initials exceed the old one-second driver
+deadline while the unchanged QUIC engine recovers correctly on a later PTO.
+Corruption tests now use the engine's total handshake budget (twice the default
+handshake idle timeout), bound both stream directions to the same deadline,
+and retain exact full-echo equality. A local PCG seed and recorded fault vector
+replace the process-global random sequence, and XOR guarantees each selected
+byte changes. The forced five-Initial case proves recovery beyond the old
+budget. Other MITM driver defaults and all runtime protocol policy are unchanged.
