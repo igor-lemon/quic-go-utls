@@ -216,3 +216,7 @@ before allocating an encoded block and while accounting decoded fields. An
 absent advertised limit (-1) or a larger caller limit cannot disable the safety
 bound. The SETTINGS advertisement is unchanged. Both the static and dynamic
 decoders and the public response-body path retain their limits.
+
+Explicit AdditionalSettings ID 6 owns both the advertised field-section size
+and the receive limit, including zero. The receive side alone is capped by the
+engine ceiling; a conflicting legacy transport value cannot override JSON.

@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	mrand "math/rand/v2"
 	"testing"
@@ -669,4 +670,25 @@ func testClientStreamHijacking(t *testing.T, bidirectional, doHijack bool, strea
 	}
 
 	// if the stream is not hijacked, the frame parser will skip the frame
+}
+
+func TestExplicitFieldSectionSizeControlsReceiveAndSettings(t *testing.T) {
+	for _, size := range []uint64{0, 1048576, 1 << 40} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			client, server := newConnPair(t)
+			cc := (&Transport{MaxResponseHeaderBytes: 17, AdditionalSettings: map[uint64]uint64{6: size}}).NewClientConn(client)
+			require.Equal(t, int(min(size, uint64(headerSectionSafetyLimit))), cc.maxResponseHeaderBytes)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			str, err := server.AcceptUniStream(ctx)
+			require.NoError(t, err)
+			require.NoError(t, str.SetReadDeadline(time.Now().Add(time.Second)))
+			kind, err := quicvarint.Read(quicvarint.NewReader(str))
+			require.NoError(t, err)
+			require.EqualValues(t, streamTypeControlStream, kind)
+			frame, err := (&frameParser{r: str}).ParseNext(nil)
+			require.NoError(t, err)
+			require.Equal(t, int64(size), frame.(*settingsFrame).MaxFieldSectionSize)
+		})
+	}
 }

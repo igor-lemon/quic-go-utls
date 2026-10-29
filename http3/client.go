@@ -147,6 +147,11 @@ func newClientConn(
 	} else {
 		c.maxResponseHeaderBytes = maxResponseHeaderBytes
 	}
+	// Explicit SETTINGS owns the receive limit too, including zero. The original
+	// uint64 value remains in additionalSettings for the wire advertisement.
+	if limit, ok := additionalSettings[settingMaxFieldSectionSize]; ok {
+		c.maxResponseHeaderBytes = int(min(limit, uint64(headerSectionSafetyLimit)))
+	}
 	c.decoder = qpack.NewDecoder()
 	c.requestWriter = newRequestWriterWithPseudoHeaderOrder(c.pseudoHeaderOrder, c.priorityParam)
 	c.requestWriter.behavior = pol
