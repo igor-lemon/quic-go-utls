@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	mrand "math/rand/v2"
@@ -168,22 +169,31 @@ func testMITMCorruptPackets(t *testing.T, direction quicproxy.Direction) {
 	serverTransport, clientTransport := getTransportsForMITMTest(t)
 	rtt := scaleDuration(5 * time.Millisecond)
 
+	// A local seed prevents other tests from changing this fault sequence.
+	const seed1, seed2 = uint64(0x6d69746d), uint64(0x636f7272757074)
+	random := mrand.New(mrand.NewPCG(seed1, seed2))
+	var faultsMu sync.Mutex
+	var faults []string
 	var numCorrupted atomic.Int32
 	dropCallback := func(dir quicproxy.Direction, _, _ net.Addr, b []byte) bool {
-		if dir != direction {
+		if dir != direction || len(b) == 0 {
 			return false
 		}
+		faultsMu.Lock()
+		defer faultsMu.Unlock()
 		isLongHeaderPacket := wire.IsLongHeaderPacket(b[0])
-		// corrupt 20% of long header packets and 5% of short header packets
-		if isLongHeaderPacket && mrand.IntN(4) != 0 {
+		// corrupt 25% of long header packets and 5% of short header packets
+		if isLongHeaderPacket && random.IntN(4) != 0 {
 			return false
 		}
-		if !isLongHeaderPacket && mrand.IntN(20) != 0 {
+		if !isLongHeaderPacket && random.IntN(20) != 0 {
 			return false
 		}
 		numCorrupted.Add(1)
-		pos := mrand.IntN(len(b))
-		b[pos] = byte(mrand.IntN(256))
+		pos := random.IntN(len(b))
+		bit := byte(1 << random.IntN(8))
+		b[pos] ^= bit // always changes the byte
+		faults = append(faults, fmt.Sprintf("len=%d long=%v offset=%d xor=%02x", len(b), isLongHeaderPacket, pos, bit))
 		switch direction {
 		case quicproxy.DirectionIncoming:
 			clientTransport.WriteTo(b, serverTransport.Conn.LocalAddr())
@@ -193,12 +203,12 @@ func testMITMCorruptPackets(t *testing.T, direction quicproxy.Direction) {
 		return true
 	}
 
-	runMITMTest(t, serverTransport, clientTransport, rtt, dropCallback)
-	t.Logf("corrupted %d packets", numCorrupted.Load())
+	runMITMTest(t, serverTransport, clientTransport, rtt, dropCallback, scaleDuration(2*protocol.DefaultHandshakeIdleTimeout))
+	t.Logf("seed=%x/%x corrupted %d packets; faults=%v", seed1, seed2, numCorrupted.Load(), faults)
 	require.NotZero(t, int(numCorrupted.Load()))
 }
 
-func runMITMTest(t *testing.T, serverTr, clientTr *quic.Transport, rtt time.Duration, dropCb quicproxy.DropCallback) {
+func runMITMTest(t *testing.T, serverTr, clientTr *quic.Transport, rtt time.Duration, dropCb quicproxy.DropCallback, budgets ...time.Duration) {
 	ln, err := serverTr.Listen(getTLSConfig(), getQuicConfig(nil))
 	require.NoError(t, err)
 	defer ln.Close()
@@ -212,7 +222,11 @@ func runMITMTest(t *testing.T, serverTr, clientTr *quic.Transport, rtt time.Dura
 	require.NoError(t, proxy.Start())
 	defer proxy.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), scaleDuration(time.Second))
+	budget := scaleDuration(time.Second)
+	if len(budgets) > 0 {
+		budget = budgets[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	conn, err := clientTr.Dial(ctx, proxy.LocalAddr(), getTLSClientConfig(), getQuicConfig(nil))
 	require.NoError(t, err)
@@ -224,6 +238,10 @@ func runMITMTest(t *testing.T, serverTr, clientTr *quic.Transport, rtt time.Dura
 
 	str, err := conn.OpenStreamSync(ctx)
 	require.NoError(t, err)
+	deadline, _ := ctx.Deadline()
+	if len(budgets) > 0 {
+		require.NoError(t, str.SetDeadline(deadline))
+	}
 	clientErrChan := make(chan error, 1)
 	go func() {
 		_, err := str.Write(PRData)
@@ -233,6 +251,9 @@ func runMITMTest(t *testing.T, serverTr, clientTr *quic.Transport, rtt time.Dura
 
 	serverStr, err := serverConn.AcceptStream(ctx)
 	require.NoError(t, err)
+	if len(budgets) > 0 {
+		require.NoError(t, serverStr.SetDeadline(deadline))
+	}
 	serverErrChan := make(chan error, 1)
 	go func() {
 		defer close(serverErrChan)
