@@ -7,6 +7,7 @@ import (
 	"github.com/igor-lemon/utls/behavior"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/url"
 	"slices"
@@ -106,6 +107,14 @@ type Transport struct {
 	// If nil or empty, settings will be sent in random map iteration order.
 	AdditionalSettingsOrder []uint64
 
+	// SettingsForConnection optionally supplies additional SETTINGS and their
+	// order for each new HTTP/3 connection, including early and direct clients.
+	// It is never called for a request reusing a connection. The callback may
+	// be called concurrently and must be safe for concurrent use. Returned data
+	// is copied before use; configure this field before using the Transport.
+	// If nil, AdditionalSettings and AdditionalSettingsOrder are copied instead.
+	SettingsForConnection func() (map[uint64]uint64, []uint64)
+
 	// PseudoHeaderOrder specifies the order in which to send pseudo-headers in HTTP/3 requests.
 	// If nil or empty, defaults to Chrome-like order: :method, :authority, :scheme, :path
 	PseudoHeaderOrder []string
@@ -168,11 +177,12 @@ func (t *Transport) init() error {
 	}
 	if t.newClientConn == nil {
 		t.newClientConn = func(conn *quic.Conn) clientConn {
+			settings, order := t.settingsForConnection()
 			return newClientConn(
 				conn,
 				t.EnableDatagrams,
-				t.AdditionalSettings,
-				t.AdditionalSettingsOrder,
+				settings,
+				order,
 				t.PseudoHeaderOrder,
 				t.SendGreaseFrames,
 				t.PriorityParam,
@@ -645,11 +655,12 @@ func (t *Transport) removeClient(hostname string, cl *roundTripperWithCount) {
 // Obtaining a ClientConn is only needed for more advanced use cases, such as
 // using Extended CONNECT for WebTransport or the various MASQUE protocols.
 func (t *Transport) NewClientConn(conn *quic.Conn) *ClientConn {
+	settings, order := t.settingsForConnection()
 	return newClientConn(
 		conn,
 		t.EnableDatagrams,
-		t.AdditionalSettings,
-		t.AdditionalSettingsOrder,
+		settings,
+		order,
 		t.PseudoHeaderOrder,
 		t.SendGreaseFrames,
 		t.PriorityParam,
@@ -660,6 +671,14 @@ func (t *Transport) NewClientConn(conn *quic.Conn) *ClientConn {
 		t.Logger,
 		t.Behavior.Clone(),
 	)
+}
+
+func (t *Transport) settingsForConnection() (map[uint64]uint64, []uint64) {
+	settings, order := t.AdditionalSettings, t.AdditionalSettingsOrder
+	if t.SettingsForConnection != nil {
+		settings, order = t.SettingsForConnection()
+	}
+	return maps.Clone(settings), slices.Clone(order)
 }
 
 // Close closes the QUIC connections that this Transport has used.
