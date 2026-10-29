@@ -282,10 +282,7 @@ func (s *qpackSession) receive(r io.Reader, encoder bool) {
 func (s *qpackSession) decode(ctx context.Context, id quic.StreamID, b []byte, limit int) qpack.DecodeFunc {
 	// Even when the advertised field-section limit is disabled, retain a hard
 	// allocation ceiling. This cannot be disabled by an untrusted peer/profile.
-	bound := uint64(16 << 20)
-	if limit >= 0 && uint64(limit) < bound {
-		bound = uint64(limit)
-	}
+	bound := uint64(headerBytesLimit(limit))
 	wait, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(s.conn.Context(), cancel)

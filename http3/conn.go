@@ -212,8 +212,8 @@ func (c *Conn) openRequestStream(
 }
 
 func (c *Conn) decodeTrailers(r io.Reader, streamID quic.StreamID, hf *headersFrame, maxHeaderBytes int, contexts ...context.Context) (http.Header, error) {
-	// If maxHeaderBytes is negative, don't enforce limit (used when not sending SETTINGS_MAX_FIELD_SECTION_SIZE)
-	if maxHeaderBytes >= 0 && hf.Length > uint64(maxHeaderBytes) {
+	maxHeaderBytes = headerBytesLimit(maxHeaderBytes)
+	if hf.Length > uint64(maxHeaderBytes) {
 		maybeQlogInvalidHeadersFrame(c.qlogger, streamID, hf.Length)
 		return nil, fmt.Errorf("http3: HEADERS frame too large: %d bytes (max: %d)", hf.Length, maxHeaderBytes)
 	}
@@ -234,7 +234,7 @@ func (c *Conn) decodeTrailers(r io.Reader, streamID quic.StreamID, hf *headersFr
 	if c.qlogger != nil {
 		fields = make([]qpack.HeaderField, 0, 16)
 	}
-	trailers, err := parseTrailers(decodeFn, &fields)
+	trailers, err := parseTrailers(decodeFn, &fields, maxHeaderBytes)
 	if err != nil {
 		maybeQlogInvalidHeadersFrame(c.qlogger, streamID, hf.Length)
 		return nil, err

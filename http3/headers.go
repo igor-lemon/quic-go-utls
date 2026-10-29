@@ -47,6 +47,17 @@ var invalidHeaderFields = [...]string{
 	"upgrade",
 }
 
+// headerSectionSafetyLimit is an engine memory bound independent of the optional
+// field-section limit advertised in SETTINGS. A peer or profile cannot disable it.
+const headerSectionSafetyLimit = 16 << 20
+
+func headerBytesLimit(limit int) int {
+	if limit < 0 || limit > headerSectionSafetyLimit {
+		return headerSectionSafetyLimit
+	}
+	return limit
+}
+
 func parseHeaders(decodeFn qpack.DecodeFunc, isRequest bool, sizeLimit int, headerFields *[]qpack.HeaderField) (header, error) {
 	hdr := header{Headers: make(http.Header)}
 	var readFirstRegularHeader, readContentLength bool
@@ -165,7 +176,11 @@ func parseHeaders(decodeFn qpack.DecodeFunc, isRequest bool, sizeLimit int, head
 	return hdr, nil
 }
 
-func parseTrailers(decodeFn qpack.DecodeFunc, headerFields *[]qpack.HeaderField) (http.Header, error) {
+func parseTrailers(decodeFn qpack.DecodeFunc, headerFields *[]qpack.HeaderField, limits ...int) (http.Header, error) {
+	limit := headerSectionSafetyLimit
+	if len(limits) > 0 {
+		limit = headerBytesLimit(limits[0])
+	}
 	h := make(http.Header)
 	for {
 		hf, err := decodeFn()
@@ -181,6 +196,10 @@ func parseTrailers(decodeFn qpack.DecodeFunc, headerFields *[]qpack.HeaderField)
 		if hf.IsPseudo() {
 			return nil, fmt.Errorf("http3: received pseudo header in trailer: %s", hf.Name)
 		}
+		if len(hf.Name)+len(hf.Value)+32 > limit {
+			return nil, errHeaderTooLarge
+		}
+		limit -= len(hf.Name) + len(hf.Value) + 32
 		h.Add(hf.Name, hf.Value)
 	}
 	return h, nil
