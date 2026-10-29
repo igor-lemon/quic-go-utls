@@ -205,7 +205,7 @@ func newRequestStream(
 		reqDone:            reqDone,
 		decoder:            decoder,
 		disableCompression: disableCompression,
-		maxHeaderBytes:     maxHeaderBytes,
+		maxHeaderBytes:     headerBytesLimit(maxHeaderBytes),
 		response:           rsp,
 	}
 }
@@ -353,8 +353,8 @@ func (s *RequestStream) ReadResponse() (*http.Response, error) {
 		s.str.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeFrameUnexpected), "expected first frame to be a HEADERS frame")
 		return nil, errors.New("http3: expected first frame to be a HEADERS frame")
 	}
-	// If maxHeaderBytes is negative, don't enforce limit (used when not sending SETTINGS_MAX_FIELD_SECTION_SIZE)
-	if s.maxHeaderBytes >= 0 && hf.Length > uint64(s.maxHeaderBytes) {
+	// Check before allocation, even when no limit is advertised to the peer.
+	if hf.Length > uint64(s.maxHeaderBytes) {
 		maybeQlogInvalidHeadersFrame(s.str.qlogger, s.str.StreamID(), hf.Length)
 		s.str.CancelRead(quic.StreamErrorCode(ErrCodeFrameError))
 		s.str.CancelWrite(quic.StreamErrorCode(ErrCodeFrameError))

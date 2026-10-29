@@ -208,3 +208,11 @@ A6 coordinated dependency also preserves an explicitly configured zero HTTP2 con
   value for x-token`), as x/net's HTTP/2 framer says it: the value may be a
   secret, and the error reaches a caller's logs. `TestRequestHeadersValidation`
   holds it with a secret value in a row of its own.
+
+## HTTP/3 response allocation bound (2026-10-29)
+
+Response HEADERS and trailers retain the existing 16 MiB QPACK engine ceiling
+before allocating an encoded block and while accounting decoded fields. An
+absent advertised limit (-1) or a larger caller limit cannot disable the safety
+bound. The SETTINGS advertisement is unchanged. Both the static and dynamic
+decoders and the public response-body path retain their limits.

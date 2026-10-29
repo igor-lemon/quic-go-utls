@@ -139,7 +139,7 @@ func newClientConn(
 	}
 	if maxResponseHeaderBytes < 0 {
 		// Negative value means don't send SETTINGS_MAX_FIELD_SECTION_SIZE
-		// But use default for receiving (to avoid abortion)
+		// Receiving still enforces the independent engine safety ceiling.
 		c.maxResponseHeaderBytes = -1
 	} else if maxResponseHeaderBytes == 0 {
 		// Zero means use default
