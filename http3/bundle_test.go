@@ -407,6 +407,15 @@ func cancellation(t *testing.T, heard *packetsBoth) (*quicqlog.PacketReceived, *
 	return nil, nil
 }
 
+// cancellationScheduleMatches checks ordering against the client's sent packet
+// numbers. A type-only stream prefix does not carry the instruction at offset1.
+func cancellationScheduleMatches(delayed bool, instruction, ack quicqlog.PacketNumber, delay time.Duration) bool {
+	if delayed {
+		return instruction == ack && delay >= 15*time.Millisecond
+	}
+	return instruction < ack || instruction == ack && delay < 15*time.Millisecond
+}
+
 // resetAlone observes the decoded Cancellation and the sender's instruction and
 // ACK packets. Opportunistic mode must share the delayed ACK; immediate mode
 // may precede that ACK or share one sent at once. Retry only the existing
