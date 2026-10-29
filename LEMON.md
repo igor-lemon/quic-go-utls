@@ -220,3 +220,13 @@ decoders and the public response-body path retain their limits.
 Explicit AdditionalSettings ID 6 owns both the advertised field-section size
 and the receive limit, including zero. The receive side alone is capped by the
 engine ceiling; a conflicting legacy transport value cannot override JSON.
+
+## Cancellation observation (2026-10-29)
+
+The bundling test decodes the peer's decoder prefix (type3, Cancellation of
+stream0), selects the frame carrying instruction byte1, and compares actual
+client PacketSent numbers with the ACK of the reset. A type-only frame cannot
+stand in for Cancellation. Immediate mode may precede the ACK or share an
+immediate ACK; opportunistic mode must share the delayed ACK. A deterministic
+preannounced type and a real delayed-mode negative control retain both rules.
+No production code or browser policy changes in this test correction.

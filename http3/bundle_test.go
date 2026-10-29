@@ -35,10 +35,11 @@ import (
 // packetsBoth is a server's qlog recorder that keeps every packet it gets,
 // and when, and every packet it sends.
 type packetsBoth struct {
-	mu   sync.Mutex
-	got  []quicqlog.PacketReceived
-	at   []time.Time
-	sent []quicqlog.PacketSent
+	mu      sync.Mutex
+	got     []quicqlog.PacketReceived
+	at      []time.Time
+	sent    []quicqlog.PacketSent
+	decoder []byte
 }
 
 func (h *packetsBoth) RecordEvent(e qlogwriter.Event) {
@@ -83,6 +84,41 @@ func (h *packetsBoth) sentCarrying(id quic.StreamID, offset int64) *quicqlog.Pac
 		}
 	}
 	return nil
+}
+
+// sentContainingByte selects the packet carrying an instruction byte, not merely
+// the stream type. Both endpoints independently record the stream prefix.
+func (h *packetsBoth) sentContainingByte(id quic.StreamID, offset int64) *quicqlog.PacketSent {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i, p := range h.sent {
+		for _, f := range p.Frames {
+			if st, ok := f.Frame.(*quicqlog.StreamFrame); ok && st.StreamID == id && st.Offset <= offset && offset < st.Offset+st.Length {
+				return &h.sent[i]
+			}
+		}
+	}
+	return nil
+}
+func (h *packetsBoth) receivedInstruction() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return bytes.Equal(h.decoder, []byte{3, 0x40})
+}
+func (h *packetsBoth) sentACK(reset quicqlog.PacketNumber) (*quicqlog.PacketSent, *quicqlog.AckFrame) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i, p := range h.sent {
+		if p.Header.PacketType != quicqlog.PacketType1RTT {
+			continue
+		}
+		for _, f := range p.Frames {
+			if ack, ok := f.Frame.(*quicqlog.AckFrame); ok && ack.AcksPacket(reset) {
+				return &h.sent[i], ack
+			}
+		}
+	}
+	return nil, nil
 }
 
 // resetSent is the packet number the server's RESET_STREAM of id went in.
@@ -147,7 +183,17 @@ func bundleServer(t *testing.T, heard *packetsBoth, serve func(*quic.Conn, *quic
 						if err != nil {
 							return
 						}
-						go io.Copy(io.Discard, str)
+						go func() {
+							if str.StreamID() == 6 {
+								var prefix [2]byte
+								if _, err := io.ReadFull(str, prefix[:]); err == nil {
+									heard.mu.Lock()
+									heard.decoder = append([]byte(nil), prefix[:]...)
+									heard.mu.Unlock()
+								}
+							}
+							_, _ = io.Copy(io.Discard, str)
+						}()
 					}
 				}()
 				for {
@@ -346,60 +392,110 @@ func TestARequestSentHeaderFirstIsBundledToo(t *testing.T) {
 // the ACK it begins with.
 func cancellation(t *testing.T, heard *packetsBoth) (*quicqlog.PacketReceived, *quicqlog.AckFrame) {
 	t.Helper()
-	var p *quicqlog.PacketReceived
-	require.Eventually(t, func() bool { p, _ = heard.carrying(6, 0); return p != nil }, 2*time.Second, 5*time.Millisecond,
-		"no Stream Cancellation")
-	ack, _ := p.Frames[0].Frame.(*quicqlog.AckFrame)
-	return p, ack
+	require.Eventually(t, heard.receivedInstruction, 2*time.Second, 5*time.Millisecond, "no decoded Stream Cancellation of stream0")
+	heard.mu.Lock()
+	defer heard.mu.Unlock()
+	for i, p := range heard.got {
+		for _, f := range p.Frames {
+			if st, ok := f.Frame.(*quicqlog.StreamFrame); ok && st.StreamID == 6 && st.Offset <= 1 && 1 < st.Offset+st.Length {
+				ack, _ := p.Frames[0].Frame.(*quicqlog.AckFrame)
+				return &heard.got[i], ack
+			}
+		}
+	}
+	t.Fatal("instruction byte not found in received frames")
+	return nil, nil
 }
 
-// resetAlone is the ACK a client wearing pol sends with its Stream
-// Cancellation of a request a quiet server resets, the reset alone in its
-// packet, as one that cannot decode its headers sends it. A server of
-// quic-go's skips a packet number now and then, which the client
-// acknowledges at once: such a run says nothing of when the ACK goes, and is
-// run again.
-func resetAlone(t *testing.T, pol behavior.Policy) *quicqlog.AckFrame {
+// resetAlone observes the decoded Cancellation and the sender's instruction and
+// ACK packets. Opportunistic mode must share the delayed ACK; immediate mode
+// may precede that ACK or share one sent at once. Retry only the existing
+// skipped-number condition, which changes when the ACK is due.
+type cancellationTiming struct {
+	instruction, ack quicqlog.PacketNumber
+	delay            time.Duration
+}
+
+func resetAlone(t *testing.T, pol behavior.Policy, delayed bool) cancellationTiming {
 	t.Helper()
 	for range 3 {
-		heard := &packetsBoth{}
+		heard, said := &packetsBoth{}, &packetsBoth{}
 		addr := bundleServer(t, heard, func(_ *quic.Conn, str *quic.Stream) {
 			time.Sleep(100 * time.Millisecond)
 			str.CancelWrite(quic.StreamErrorCode(ErrCodeQPACKDecompressionFailed))
 		})
-		cc := bundleClient(t, addr, pol)
+		cc := bundleClient(t, addr, pol, said)
+		if !delayed {
+			// Deterministically split the legal stream type prefix from its first
+			// instruction. The old oracle mistook this prefix for Cancellation.
+			select {
+			case <-cc.setupComplete:
+			case <-time.After(2 * time.Second):
+				t.Fatal("local SETTINGS not complete")
+			}
+			require.NoError(t, cc.conn.qpack.startDeferred())
+			writer := cc.conn.qpack.decoderWriter
+			writer.start.Do(func() { go writer.run() })
+			require.Eventually(t, func() bool { return said.sentCarrying(6, 0) != nil }, time.Second, time.Millisecond)
+			require.False(t, heard.receivedInstruction())
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_, err := cc.RoundTrip(asked(t, ctx, addr))
 		require.Error(t, err)
 		cancel()
-		_, ack := cancellation(t, heard)
-		require.NotNil(t, ack)
-		require.True(t, ack.AcksPacket(heard.resetSent(0)), "the reset not acknowledged with it")
-		if len(ack.AckRanges) == 1 {
-			return ack
+		require.Eventually(t, heard.receivedInstruction, 2*time.Second, time.Millisecond)
+		var instruction, ackPacket *quicqlog.PacketSent
+		var ack *quicqlog.AckFrame
+		require.Eventually(t, func() bool {
+			instruction = said.sentContainingByte(6, 1)
+			ackPacket, ack = said.sentACK(heard.resetSent(0))
+			return instruction != nil && ack != nil
+		}, 2*time.Second, time.Millisecond)
+		t.Logf("mode=%q instruction_packet=%d ack_packet=%d ack_delay=%s", pol.Text("h3.qpack.decoder_writes"), instruction.Header.PacketNumber, ackPacket.Header.PacketNumber, ack.DelayTime)
+		if len(ack.AckRanges) != 1 {
+			continue
 		}
+		require.True(t, cancellationScheduleMatches(delayed, instruction.Header.PacketNumber, ackPacket.Header.PacketNumber, ack.DelayTime), "instruction %d ACK %d delay %s", instruction.Header.PacketNumber, ackPacket.Header.PacketNumber, ack.DelayTime)
+		if !delayed {
+			require.Less(t, said.sentCarrying(6, 0).Header.PacketNumber, instruction.Header.PacketNumber, "type-only packet must precede instruction")
+		}
+		return cancellationTiming{instruction.Header.PacketNumber, ackPacket.Header.PacketNumber, ack.DelayTime}
 	}
 	t.Fatal("a packet number skipped in every run")
-	return nil
+	return cancellationTiming{}
 }
 
 func TestAStreamCancellationGoesWithTheClientsNextACKAsItsProfileSays(t *testing.T) {
 	for _, tc := range []struct {
 		mode    string
-		delayed bool // with the client's ACK, delayed as one of a lone packet is
+		delayed bool
+	}{{"opportunistic", true}, {"as-written", false}, {"", false}} {
+		t.Run("mode-"+tc.mode, func(t *testing.T) {
+			values := map[string]any{"h3.qpack.decoder_writes": tc.mode, "h3.peer_reset": "read-side"}
+			if tc.mode == "" {
+				values["h3.qpack.decoder_writes"] = nil
+			}
+			resetAlone(t, bundlePolicy(t, values), tc.delayed)
+		})
+	}
+}
+
+func TestDelayedCancellationFailsImmediateRule(t *testing.T) {
+	observed := resetAlone(t, bundlePolicy(t, map[string]any{"h3.qpack.decoder_writes": "opportunistic", "h3.peer_reset": "read-side"}), true)
+	require.False(t, cancellationScheduleMatches(false, observed.instruction, observed.ack, observed.delay), "actual delayed wire sequence must fail immediate rule")
+}
+
+func TestCancellationScheduleNegativeControls(t *testing.T) {
+	for _, c := range []struct {
+		delayed          bool
+		instruction, ack quicqlog.PacketNumber
+		delay            time.Duration
+		want             bool
 	}{
-		{"opportunistic", true},
-		{"as-written", false},
-		{"", false},
+		{true, 10, 10, 25 * time.Millisecond, true}, {true, 9, 10, 25 * time.Millisecond, false}, {true, 10, 10, 0, false},
+		{false, 9, 10, 25 * time.Millisecond, true}, {false, 10, 10, 0, true}, {false, 10, 10, 25 * time.Millisecond, false}, {false, 11, 10, 0, false},
 	} {
-		// nothing of the client's own after the reset (Chrome's read-side)
-		values := map[string]any{"h3.qpack.decoder_writes": tc.mode, "h3.peer_reset": "read-side"}
-		if tc.mode == "" {
-			values["h3.qpack.decoder_writes"] = nil
-		}
-		ack := resetAlone(t, bundlePolicy(t, values))
-		// the client's own clock: a delayed ACK's 25 ms, or at once
-		require.Equal(t, tc.delayed, ack.DelayTime >= 15*time.Millisecond, "%s: acknowledged %s after the reset", tc.mode, ack.DelayTime)
+		require.Equal(t, c.want, cancellationScheduleMatches(c.delayed, c.instruction, c.ack, c.delay), "%+v", c)
 	}
 }
 
