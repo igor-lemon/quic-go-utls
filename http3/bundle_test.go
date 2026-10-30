@@ -121,6 +121,34 @@ func (h *packetsBoth) sentACK(reset quicqlog.PacketNumber) (*quicqlog.PacketSent
 	return nil, nil
 }
 
+// largestAckBefore reconstructs the client's acknowledged packet-number
+// frontier; packet numbers in different encryption spaces are never mixed.
+func (h *packetsBoth) largestAckBefore(packet quicqlog.PacketNumber) quicqlog.PacketNumber {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	largest := quicqlog.PacketNumber(-1)
+	for _, p := range h.sent {
+		if p.Header.PacketType != quicqlog.PacketType1RTT || p.Header.PacketNumber >= packet {
+			continue
+		}
+		for _, frame := range p.Frames {
+			if ack, ok := frame.Frame.(*quicqlog.AckFrame); ok {
+				for _, r := range ack.AckRanges {
+					largest = max(largest, r.Largest)
+				}
+			}
+		}
+	}
+	return largest
+}
+
+// A single retained range can start after an unacknowledged gap. An older
+// reset arriving after a newer acknowledged packet also requires immediate
+// ACK. This classifies the input independently of the measured ACK delay.
+func cancellationACKHasGap(previous, reset quicqlog.PacketNumber, ack *quicqlog.AckFrame) bool {
+	return len(ack.AckRanges) != 1 || reset <= previous || ack.AckRanges[0].Smallest > previous+1
+}
+
 // resetSent is the packet number the server's RESET_STREAM of id went in.
 func (h *packetsBoth) resetSent(id quic.StreamID) quicqlog.PacketNumber {
 	h.mu.Lock()
@@ -461,7 +489,12 @@ func resetAlone(t *testing.T, pol behavior.Policy, delayed bool) cancellationTim
 			return instruction != nil && ack != nil
 		}, 2*time.Second, time.Millisecond)
 		t.Logf("mode=%q instruction_packet=%d ack_packet=%d ack_delay=%s", pol.Text("h3.qpack.decoder_writes"), instruction.Header.PacketNumber, ackPacket.Header.PacketNumber, ack.DelayTime)
-		if len(ack.AckRanges) != 1 {
+		previous := said.largestAckBefore(ackPacket.Header.PacketNumber)
+		if cancellationACKHasGap(previous, heard.resetSent(0), ack) {
+			// A skipped ACK-only packet can leave one current ACK range;
+			// the gap is visible only relative to the preceding ACK. Such
+			// an input requires immediate ACK, outside this delayed cohort.
+			t.Logf("skipped-number cohort: previous_ack=%d reset=%d ranges=%v", previous, heard.resetSent(0), ack.AckRanges)
 			continue
 		}
 		require.True(t, cancellationScheduleMatches(delayed, instruction.Header.PacketNumber, ackPacket.Header.PacketNumber, ack.DelayTime), "instruction %d ACK %d delay %s", instruction.Header.PacketNumber, ackPacket.Header.PacketNumber, ack.DelayTime)
@@ -794,4 +827,25 @@ func TestAWriteHeadersSaysWhatToWaitFor(t *testing.T) {
 	queued, _ := w.mark()
 	require.Equal(t, uint64(1), queued, "nothing queued: no case of a writer to open")
 	_ = slices.Clone([]int{})
+}
+
+func TestCancellationACKGapClassificationUsesPriorState(t *testing.T) {
+	for _, offset := range []quicqlog.PacketNumber{0, 10, 1000} {
+		for _, tc := range []struct {
+			previous, reset, smallest, largest quicqlog.PacketNumber
+			gap                                bool
+		}{
+			{2, 5, 4, 5, true},   // observed skipped ACK-only3, then RESET5; only one range
+			{4, 5, 4, 5, false},  // the earlier gap has already been acknowledged
+			{2, 5, 0, 5, false},  // contiguous retained history
+			{10, 5, 0, 10, true}, // reordered reset, which fills a previous gap
+		} {
+			ack := &quicqlog.AckFrame{AckRanges: []quicqlog.AckRange{{Smallest: tc.smallest + offset, Largest: tc.largest + offset}}}
+			require.Equal(t, tc.gap, cancellationACKHasGap(tc.previous+offset, tc.reset+offset, ack), "%+v offset=%d", tc, offset)
+		}
+	}
+	ack := &quicqlog.AckFrame{AckRanges: []quicqlog.AckRange{{Smallest: 0, Largest: 0}}}
+	require.False(t, cancellationACKHasGap(-1, 0, ack))
+	// A gap-free immediate flush must still fail the opportunistic delay rule.
+	require.False(t, cancellationScheduleMatches(true, 10, 10, 0))
 }
