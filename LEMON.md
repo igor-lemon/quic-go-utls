@@ -269,3 +269,26 @@ The decompressed HEADERS integration fixture expects the exact QPACK limit
 error, raised during bounded decoding before a full header map allocation. Its
 independent raw compressed-size (<1024) assertion is retained, as are the
 encoded-oversize error and (>1024) assertion. Both run twenty times under race.
+
+## A11 buffered QPACK lifetime
+
+Native shutdown acceptance exposed a production race: connection cancellation
+was merged into the request context, so already buffered static HEADERS could
+be discarded after the peer's graceful close. The original unmodified shutdown
+fixture reproduced23 parent/25 child failures in100 race repetitions. After the
+engine fix it passes100race (10.414s), with no fixture timing/assertion change.
+
+QPACK now distinguishes explicit request cancellation from connection lifetime.
+The latter stops waits for missing inserts; ready sections still undergo full
+wire/table/size validation. Feedback errors remain fatal on live connections.
+A terminal connection has no surviving peer table or feedback I/O to perform.
+Ready dynamic sections, caller cancellation, missing inserts, malformed blocks,
+limits and live-feedback failure have direct controls. All QPACK/cancellation/
+blocked controls pass20race (16.980s). Restoring the old merged cancellation or
+removing the blocked wait's connection stop is rejected by negative controls;
+the private export is restored byte-for-byte after each mutation.
+
+This is a generic protocol/resource-lifetime fix, not a selectable browser value
+or a JSON policy change. It shares the current unpublished engine1 release;
+all existing profile values/identities remain unchanged. Full graph/native and
+root/browser revalidation are still required before A11 completion.
