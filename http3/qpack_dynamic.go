@@ -265,6 +265,14 @@ func requiredInsertCount(encoded, total, maximum uint64) (uint64, error) {
 	return req, nil
 }
 func (d *dynamicQPACKDecoder) decode(ctx context.Context, stream uint64, block []byte, limit uint64) ([]qpack.HeaderField, error) {
+	return d.decodeWithConnection(ctx, context.Background(), stream, block, limit)
+}
+
+// Request cancellation always applies. Connection termination only prevents
+// waiting for missing inserts; it cannot invalidate a fully buffered section
+// whose table dependencies are already available.
+func (d *dynamicQPACKDecoder) decodeWithConnection(ctx, connection context.Context, stream uint64, block []byte, limit uint64) ([]qpack.HeaderField, error) {
+
 	fail := func(err error) ([]qpack.HeaderField, error) {
 		return nil, qpackFailure(ErrCodeQPACKDecompressionFailed, err)
 	}
@@ -310,15 +318,23 @@ func (d *dynamicQPACKDecoder) decode(ctx context.Context, stream uint64, block [
 		d.blocked[stream] = true
 		defer delete(d.blocked, stream)
 		for req > d.table.inserted {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if err := connection.Err(); err != nil {
+				return nil, err
+			}
 			changed := d.changed
 			d.mu.Unlock()
 			select {
 			case <-changed:
 			case <-ctx.Done():
-				d.mu.Lock()
-				return nil, ctx.Err()
+			case <-connection.Done():
 			}
 			d.mu.Lock()
+			// Recheck dependencies under the lock before interpreting a
+			// simultaneous connection close. Explicit request cancel still
+			// wins at the check below even when inserts became available.
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -423,9 +439,16 @@ func (d *dynamicQPACKDecoder) decode(ctx context.Context, stream uint64, block [
 	if largest != req {
 		return fail(errQPACKWire)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if req != 0 && d.send != nil {
-		if err = d.send(appendQPACKInt(nil, 7, 0x80, stream)); err != nil {
-			return nil, err
+		// A terminal connection has no surviving peer table to acknowledge.
+		// Preserve every feedback failure while the connection is live.
+		if connection.Err() == nil {
+			if err = d.send(appendQPACKInt(nil, 7, 0x80, stream)); err != nil && connection.Err() == nil {
+				return nil, err
+			}
 		}
 		if req > d.reported {
 			d.reported = req
