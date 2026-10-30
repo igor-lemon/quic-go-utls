@@ -327,7 +327,10 @@ func TestHTTPHeaderSizeLimitClient(t *testing.T) {
 			hdr.Add("content-type", "text/plain;charset=utf-8")
 		}
 		headersFrameSize, requestErr := testHTTPHeaderSizeLimitClient(t, hdr, limit)
-		require.ErrorContains(t, requestErr, "http3: headers too large")
+		// QPACK now enforces the decompressed field-section bound while
+		// decoding, before a full header map can be allocated. Preserve the
+		// exact error contract and the independent compressed-size assertion.
+		require.ErrorContains(t, requestErr, "http3: invalid response: qpack: QPACK field section exceeds limit")
 		require.Less(t, headersFrameSize, limit)
 	})
 }

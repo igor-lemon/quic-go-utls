@@ -262,3 +262,10 @@ until all required positive events arrive, with one five-second deadline and no
 redial/replay. Packet/CID/ECN assertions are unchanged. Twenty race repetitions
 pass; host ECN capability remains explicitly reported rather than fabricated.
 The externally supplied UDP socket is now closed by its test owner.
+
+## A11 decompressed header-limit witness
+
+The decompressed HEADERS integration fixture expects the exact QPACK limit
+error, raised during bounded decoding before a full header map allocation. Its
+independent raw compressed-size (<1024) assertion is retained, as are the
+encoded-oversize error and (>1024) assertion. Both run twenty times under race.
