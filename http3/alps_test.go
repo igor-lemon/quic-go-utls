@@ -376,7 +376,7 @@ func alpsSpec(params []byte) (tls.ClientHelloSpec, error) {
 // address for h3, its control stream's SETTINGS beside its own those of
 // control, late after its handshake; its requests' headers go on headers,
 // and how each connection ended on closed.
-func alpsServer(t *testing.T, alps func(addr string) []byte, control map[uint64]uint64, late time.Duration) (addr string, headers chan http.Header, closed chan error) {
+func alpsServer(t *testing.T, alps func(addr string) []byte, control map[uint64]uint64, late time.Duration, ready ...<-chan struct{}) (addr string, headers chan http.Header, closed chan error) {
 	t.Helper()
 	cfg := getTLSConfig()
 	conn := newUDPConnLocalhost(t)
@@ -404,6 +404,13 @@ func alpsServer(t *testing.T, alps func(addr string) []byte, control map[uint64]
 				closed <- context.Cause(conn.Context())
 			}()
 			go func() {
+				if len(ready) > 0 {
+					select {
+					case <-ready[0]:
+					case <-conn.Context().Done():
+						return
+					}
+				}
 				time.Sleep(late)
 				srv.ServeQUICConn(conn)
 			}()
@@ -612,16 +619,30 @@ func TestATransportReadsALPSOnlyAsItsProfileSays(t *testing.T) {
 func TestAControlStreamOfNoRequestIsHeldToWhatALPSGave(t *testing.T) {
 	// a connection made for no request: its control stream's SETTINGS are
 	// still held to ALPS's, and refused
-	addr, _, closed := alpsServer(t, func(string) []byte { return h3Settings(1, 4096) }, map[uint64]uint64{1: 8192}, 0)
+	sendControl := make(chan struct{})
+	addr, headers, closed := alpsServer(t, func(string) []byte { return h3Settings(1, 4096) }, map[uint64]uint64{1: 8192}, 0, sendControl)
 	tr := alpsClient(t, chromeALPSPolicy(t, nil))
-	require.NoError(t, tr.Preconnect(context.Background(), addr))
+	// Establish a connection before the deliberately invalid regular SETTINGS.
+	// Preconnect may otherwise observe a terminal peer condition first; its
+	// success is only a valid precondition before that stimulus is released.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, tr.Preconnect(ctx, addr))
+	close(sendControl)
 	select {
 	case err := <-closed:
 		var ae *quic.ApplicationError
 		require.ErrorAs(t, err, &ae)
+		require.EqualValues(t, 0x109, ae.ErrorCode)
+		require.True(t, ae.Remote)
 		require.Equal(t, "164:Server sent an SETTINGS_QPACK_MAX_TABLE_CAPACITY: 8192 while current value is: 4096", ae.ErrorMessage)
 	case <-time.After(5 * time.Second):
 		t.Fatal("the server's connection did not end")
+	}
+	select {
+	case request := <-headers:
+		t.Fatalf("Preconnect emitted an HTTP request: %v", request)
+	default:
 	}
 }
 
