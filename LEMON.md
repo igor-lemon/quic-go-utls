@@ -251,3 +251,14 @@ checked. This removes an unsupported ordering assumption, not an engine retry:
 200 race repetitions pass. The native red observation remains in A11 evidence;
 the original fixture passed 200 local repetitions and its native failure's raw
 per-test log was unavailable, so that particular cause is not claimed proven.
+
+## A11 active packet-policy observation
+
+The MTU/CID/ECN fixture gives every tested policy the same bounded periodic
+stream stimulus. PMTU checks occur on sending; an idle sleep did not guarantee a
+probe, even when extended to five seconds (retained failing evidence). Each
+connection remains alive for the full 300 ms negative-observation window and
+until all required positive events arrive, with one five-second deadline and no
+redial/replay. Packet/CID/ECN assertions are unchanged. Twenty race repetitions
+pass; host ECN capability remains explicitly reported rather than fabricated.
+The externally supplied UDP socket is now closed by its test owner.

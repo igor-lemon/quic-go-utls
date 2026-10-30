@@ -3,6 +3,7 @@ package quic
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -50,7 +51,7 @@ func (h *heardPackets) heard() []qlog.PacketReceived {
 // afterHandshake is what a loopback server heard of a client wearing pol,
 // whose InitialData, when there is one, is asked on the connection, from its
 // dial to hold after the handshake.
-func afterHandshake(t *testing.T, pol behavior.Policy, initialData func(*Conn), hold time.Duration) []qlog.PacketReceived {
+func afterHandshake(t *testing.T, pol behavior.Policy, initialData func(*Conn), hold time.Duration, ready ...func([]qlog.PacketReceived) bool) []qlog.PacketReceived {
 	t.Helper()
 	require.NoError(t, pol.Validate())
 	heard := &heardPackets{}
@@ -66,18 +67,53 @@ func afterHandshake(t *testing.T, pol behavior.Policy, initialData func(*Conn), 
 		if err != nil {
 			return
 		}
+		if len(ready) > 0 {
+			stream, err := conn.AcceptUniStream(context.Background())
+			if err == nil {
+				_, _ = io.Copy(io.Discard, stream)
+			}
+		}
 		<-conn.Context().Done()
 	}()
 	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	require.NoError(t, err)
 	tr := &Transport{Conn: udp}
 	defer tr.Close()
+	defer udp.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	conn, err := tr.Dial(ctx, ln.Addr(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}},
 		&Config{Behavior: pol, InitialPacketSize: 1250, InitialData: initialData})
 	require.NoError(t, err)
-	time.Sleep(hold)
+	// Keep the complete negative-observation window, then wait for required
+	// positive events under the same connection. Never redial/replay a cohort.
+	minimum := time.NewTimer(hold)
+	defer minimum.Stop()
+	poll := time.NewTicker(5 * time.Millisecond)
+	defer poll.Stop()
+	var stimulus *SendStream
+	if len(ready) > 0 {
+		stimulus, err = conn.OpenUniStreamSync(ctx)
+		require.NoError(t, err)
+		require.NoError(t, stimulus.SetWriteDeadline(time.Now().Add(5*time.Second)))
+	}
+	elapsed := false
+	for {
+		if elapsed && (len(ready) == 0 || ready[0](heard.heard())) {
+			break
+		}
+		select {
+		case <-minimum.C:
+			elapsed = true
+		case <-poll.C:
+			if stimulus != nil {
+				_, err = stimulus.Write([]byte{0})
+				require.NoError(t, err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("required packet events absent after %s: largest=%d retire=%v ECN=%d", 5*time.Second, largest(heard.heard()), sawFrame(heard.heard(), retire), marked(heard.heard()))
+		}
+	}
 	require.NoError(t, conn.CloseWithError(0, ""))
 	return heard.heard()
 }
@@ -129,7 +165,7 @@ func TestAClientMarksProbesAndChangesItsConnectionIDAsItsProfileSays(t *testing.
 	// quic-go's: ECT(0) where the socket can, path MTU probes larger than the
 	// first packets once the handshake is confirmed, and the server's
 	// connection ID retired at once for its next
-	legacy := afterHandshake(t, afterPolicy(nil), nil, 300*time.Millisecond)
+	legacy := afterHandshake(t, afterPolicy(nil), nil, 300*time.Millisecond, func(p []qlog.PacketReceived) bool { return sawFrame(p, retire) && largest(p) > 1250 })
 	require.True(t, sawFrame(legacy, retire), "quic-go's retires the server's first connection ID")
 	require.Greater(t, largest(legacy), 1250, "quic-go's probes the path MTU")
 	ecn := marked(legacy) > 0
@@ -138,7 +174,7 @@ func TestAClientMarksProbesAndChangesItsConnectionIDAsItsProfileSays(t *testing.
 	}
 	// Chrome's: none of it
 	chrome := afterHandshake(t, afterPolicy(map[string]string{"quic.ecn": `"none"`, "quic.mtu_probes": `"none"`,
-		"quic.connection_id_change": `"when-retired"`}), nil, 300*time.Millisecond)
+		"quic.connection_id_change": `"when-retired"`}), nil, 300*time.Millisecond, func([]qlog.PacketReceived) bool { return true })
 	require.NotEmpty(t, chrome)
 	require.False(t, sawFrame(chrome, retire), "the server's first connection ID kept")
 	require.LessOrEqual(t, largest(chrome), 1250, "no path MTU probe")
@@ -155,7 +191,9 @@ func TestAClientMarksProbesAndChangesItsConnectionIDAsItsProfileSays(t *testing.
 		{"quic.mtu_probes", `"search"`, true, true, ecn},
 		{"quic.connection_id_change", `"after-handshake"`, true, true, ecn},
 	} {
-		got := afterHandshake(t, afterPolicy(map[string]string{tc.key: tc.value}), nil, 300*time.Millisecond)
+		got := afterHandshake(t, afterPolicy(map[string]string{tc.key: tc.value}), nil, 300*time.Millisecond, func(p []qlog.PacketReceived) bool {
+			return (!tc.retires || sawFrame(p, retire)) && (!tc.probes || largest(p) > 1250) && (!tc.ec || marked(p) > 0)
+		})
 		require.Equal(t, tc.retires, sawFrame(got, retire), "%s %s: a RETIRE_CONNECTION_ID", tc.key, tc.value)
 		require.Equal(t, tc.probes, largest(got) > 1250, "%s %s: a path MTU probe", tc.key, tc.value)
 		require.Equal(t, tc.ec, marked(got) > 0, "%s %s: ECN marks", tc.key, tc.value)
