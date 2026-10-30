@@ -241,3 +241,13 @@ and retain exact full-echo equality. A local PCG seed and recorded fault vector
 replace the process-global random sequence, and XOR guarantees each selected
 byte changes. The forced five-Initial case proves recovery beyond the old
 budget. Other MITM driver defaults and all runtime protocol policy are unchanged.
+
+## A11 causal ALPS observation
+
+The no-request ALPS test releases deliberately conflicting regular SETTINGS
+only after its successful Preconnect precondition. The original exact remote
+error remains, with application code 0x109 and absence of HTTP requests also
+checked. This removes an unsupported ordering assumption, not an engine retry:
+200 race repetitions pass. The native red observation remains in A11 evidence;
+the original fixture passed 200 local repetitions and its native failure's raw
+per-test log was unavailable, so that particular cause is not claimed proven.
