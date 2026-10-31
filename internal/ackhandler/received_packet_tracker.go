@@ -122,7 +122,8 @@ type appDataReceivedPacketTracker struct {
 	decimation       *AckDecimation
 	// gapPackets, when set (SetGapPackets), is how many packets after a gap
 	// are each acknowledged at once, as quiche's HasNewMissingPackets says
-	gapPackets int
+	gapPackets          int
+	reorderingThreshold protocol.PacketNumber
 
 	ackElicitingPacketsReceivedSinceLastAck int
 	ackAlarm                                monotime.Time
@@ -136,6 +137,7 @@ func newAppDataReceivedPacketTracker(logger utils.Logger) *appDataReceivedPacket
 		leastReceived:         protocol.InvalidPacketNumber,
 		maxAckDelay:           protocol.MaxAckDelay,
 		packetsBeforeAck:      packetsBeforeAck,
+		reorderingThreshold:   reorderingThreshold,
 		logger:                logger,
 	}
 	return h
@@ -225,10 +227,10 @@ func (h *appDataReceivedPacketTracker) hasNewMissingPackets() bool {
 	if h.lastAck == nil {
 		return false
 	}
-	if h.largestObserved < reorderingThreshold {
+	if h.largestObserved < h.reorderingThreshold {
 		return false
 	}
-	highestMissing := h.packetHistory.HighestMissingUpTo(h.largestObserved - reorderingThreshold)
+	highestMissing := h.packetHistory.HighestMissingUpTo(h.largestObserved - h.reorderingThreshold)
 	if highestMissing == protocol.InvalidPacketNumber {
 		return false
 	}
@@ -236,7 +238,7 @@ func (h *appDataReceivedPacketTracker) hasNewMissingPackets() bool {
 		// the packet was already reported missing in the last ACK
 		return false
 	}
-	return highestMissing > h.lastAck.LargestAcked()-reorderingThreshold
+	return highestMissing > h.lastAck.LargestAcked()-h.reorderingThreshold
 }
 
 // afterGap says, as quiche's HasNewMissingPackets does, whether the packets

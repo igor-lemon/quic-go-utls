@@ -319,3 +319,10 @@ chosen template on the authenticated close frame and preserve the original RED.
 Shared H3 sockets take source CID length from validated JSON. Client TP TLVs are
 ordered by declared slots without rebuilding their values, with an explicit bounded
 byte-modulo GREASE payload rule. Config validation precedes transport I/O.
+
+## A13 profile ACK thresholds
+
+Initial ACK packet count and new-gap reordering threshold come from explicit
+policy before receiving packets. The existing delayed/decimated ACK lifecycle
+and low-level default behavior are preserved. Controlled packet sequences prove
+the selected thresholds change ACK emission, without resetting connection state.
