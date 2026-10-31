@@ -41,7 +41,9 @@ type Conn struct {
 	isServer bool
 	logger   *slog.Logger
 
-	enableDatagrams bool
+	enableDatagrams        bool
+	localDatagramModes     uint8
+	negotiatedDatagramMode atomic.Uint32
 
 	decoder *qpack.Decoder
 	qpack   *qpackSession
@@ -78,18 +80,19 @@ func newConnection(
 		qlogger = qlogTrace.AddProducer()
 	}
 	c := &Conn{
-		ctx:              ctx,
-		conn:             quicConn,
-		isServer:         isServer,
-		logger:           logger,
-		idleTimeout:      idleTimeout,
-		enableDatagrams:  enableDatagrams,
-		decoder:          qpack.NewDecoder(),
-		receivedSettings: make(chan struct{}),
-		streams:          make(map[quic.StreamID]*stateTrackingStream),
-		maxStreamID:      invalidStreamID,
-		lastStreamID:     invalidStreamID,
-		qlogger:          qlogger,
+		ctx:                ctx,
+		conn:               quicConn,
+		isServer:           isServer,
+		logger:             logger,
+		idleTimeout:        idleTimeout,
+		enableDatagrams:    enableDatagrams,
+		localDatagramModes: localDatagramModes(enableDatagrams, nil),
+		decoder:            qpack.NewDecoder(),
+		receivedSettings:   make(chan struct{}),
+		streams:            make(map[quic.StreamID]*stateTrackingStream),
+		maxStreamID:        invalidStreamID,
+		lastStreamID:       invalidStreamID,
+		qlogger:            qlogger,
 	}
 	if idleTimeout > 0 {
 		c.idleTimer = time.AfterFunc(idleTimeout, c.onIdleTimer)
@@ -355,6 +358,11 @@ func (c *Conn) handleControlStream(str *quic.ReceiveStream) {
 	fp := &frameParser{closeConn: c.conn.CloseWithError, r: str, streamID: str.StreamID(), booleansAsSaid: c.alps != nil}
 	f, err := fp.ParseNext(c.qlogger)
 	if err != nil {
+		var settingErr *datagramSettingError
+		if errors.As(err, &settingErr) {
+			c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeSettingsError), err.Error())
+			return
+		}
 		var serr *quic.StreamError
 		if err == io.EOF || errors.As(err, &serr) {
 			c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeClosedCriticalStream), "")
@@ -369,7 +377,7 @@ func (c *Conn) handleControlStream(str *quic.ReceiveStream) {
 		return
 	}
 	c.settings = &Settings{
-		EnableDatagrams:       sf.Datagram,
+		EnableDatagrams:       sf.Datagram || sf.DatagramDraft08,
 		EnableExtendedConnect: sf.ExtendedConnect,
 		Other:                 sf.Other,
 	}
@@ -387,8 +395,20 @@ func (c *Conn) handleControlStream(str *quic.ReceiveStream) {
 	} else if c.qpack != nil {
 		c.qpack.encoder.configure(sf.Other[1], sf.Other[7])
 	}
-	close(c.receivedSettings)
+	peerModes := uint8(0)
 	if sf.Datagram {
+		peerModes |= datagramRFC
+	}
+	if sf.DatagramDraft08 {
+		peerModes |= datagramDraft08
+	}
+	common := c.localDatagramModes & peerModes
+	if common&datagramRFC != 0 {
+		c.negotiatedDatagramMode.Store(uint32(datagramRFC))
+	} else if common&datagramDraft08 != 0 {
+		c.negotiatedDatagramMode.Store(uint32(datagramDraft08))
+	}
+	if common != 0 {
 		// If datagram support was enabled on our side as well as on the server side,
 		// we can expect it to have been negotiated both on the transport and on the HTTP/3 layer.
 		// Note: ConnectionState() will block until the handshake is complete (relevant when using 0-RTT).
@@ -404,6 +424,8 @@ func (c *Conn) handleControlStream(str *quic.ReceiveStream) {
 			}
 		}()
 	}
+
+	close(c.receivedSettings)
 
 	// we don't support server push, hence we don't expect any GOAWAY frames from the client
 	if c.isServer {
@@ -452,6 +474,14 @@ func (c *Conn) handleControlStream(str *quic.ReceiveStream) {
 }
 
 func (c *Conn) sendDatagram(streamID quic.StreamID, b []byte) error {
+	select {
+	case <-c.receivedSettings:
+	default:
+		return errors.New("HTTP Datagram negotiation is incomplete")
+	}
+	if c.negotiatedDatagramMode.Load() == 0 {
+		return errors.New("HTTP Datagrams were not negotiated")
+	}
 	// TODO: this creates a lot of garbage and an additional copy
 	data := make([]byte, 0, len(b)+8)
 	quarterStreamID := uint64(streamID / 4)
@@ -477,7 +507,7 @@ func (c *Conn) receiveDatagrams() error {
 		}
 		quarterStreamID, n, err := quicvarint.Parse(b)
 		if err != nil {
-			c.CloseWithError(quic.ApplicationErrorCode(ErrCodeDatagramError), "")
+			c.CloseWithError(quic.ApplicationErrorCode(c.datagramErrorCode()), "")
 			return fmt.Errorf("could not read quarter stream id: %w", err)
 		}
 		if c.qlogger != nil {
@@ -490,7 +520,7 @@ func (c *Conn) receiveDatagrams() error {
 			})
 		}
 		if quarterStreamID > maxQuarterStreamID {
-			c.CloseWithError(quic.ApplicationErrorCode(ErrCodeDatagramError), "")
+			c.CloseWithError(quic.ApplicationErrorCode(c.datagramErrorCode()), "")
 			return fmt.Errorf("invalid quarter stream id: %w", err)
 		}
 		streamID := quic.StreamID(4 * quarterStreamID)
@@ -549,4 +579,31 @@ func settingsSaid(sf *settingsFrame) [][2]uint64 {
 		said = append(said, [2]uint64{id, sf.Other[id]})
 	}
 	return said
+}
+
+const (
+	datagramRFC uint8 = 1 << iota
+	datagramDraft08
+)
+
+// localDatagramModes follows the exact SETTINGS values sent. The RFC setting
+// is automatically emitted when enabled unless explicitly overridden to zero.
+func localDatagramModes(enabled bool, settings map[uint64]uint64) uint8 {
+	if !enabled {
+		return 0
+	}
+	var modes uint8
+	if value, has := settings[settingDatagram]; !has || value == 1 {
+		modes |= datagramRFC
+	}
+	if settings[settingDatagramDraft08] == 1 {
+		modes |= datagramDraft08
+	}
+	return modes
+}
+func (c *Conn) datagramErrorCode() ErrCode {
+	if c.negotiatedDatagramMode.Load() == uint32(datagramDraft08) {
+		return ErrCode(0x4a1268)
+	}
+	return ErrCodeDatagramError
 }

@@ -189,12 +189,15 @@ const (
 	settingExtendedConnect = 0x8
 	// HTTP Datagrams, RFC 9297
 	settingDatagram = 0x33
+	// draft-ietf-masque-h3-datagram-08, sections 2.1 and 5.1.
+	settingDatagramDraft08 = 0xffd277
 )
 
 type settingsFrame struct {
 	MaxFieldSectionSize int64 // SETTINGS_MAX_FIELD_SECTION_SIZE, -1 if not set
 
 	Datagram        bool // HTTP Datagrams, RFC 9297
+	DatagramDraft08 bool // Preserved in Other for exact SETTINGS provenance.
 	ExtendedConnect bool // Extended CONNECT, RFC 9220
 	// the values a received frame said them as, kept for a profile that
 	// takes them itself (frameParser.booleansAsSaid); nil otherwise
@@ -271,6 +274,12 @@ func parseSettingsFrame(r *countingByteReader, l uint64, streamID quic.StreamID,
 			if qlogger != nil {
 				settingsFrame.Datagram = pointer(frame.Datagram)
 			}
+		case settingDatagramDraft08:
+			if val > 1 {
+				return nil, &datagramSettingError{value: val}
+			}
+			frame.DatagramDraft08 = val == 1
+			fallthrough
 		default:
 			if _, ok := frame.Other[id]; ok {
 				return nil, fmt.Errorf("duplicate setting: %d", id)
@@ -370,4 +379,11 @@ func (f *goAwayFrame) Append(b []byte) []byte {
 	b = quicvarint.Append(b, 0x7)
 	b = quicvarint.Append(b, uint64(quicvarint.Len(uint64(f.StreamID))))
 	return quicvarint.Append(b, uint64(f.StreamID))
+}
+
+// datagramSettingError retains the distinction from malformed frame encodings.
+type datagramSettingError struct{ value uint64 }
+
+func (e *datagramSettingError) Error() string {
+	return fmt.Sprintf("invalid value for draft-08 SETTINGS_H3_DATAGRAM: %d", e.value)
 }

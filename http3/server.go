@@ -496,6 +496,7 @@ func (s *Server) handleConn(conn *quic.Conn) error {
 		s.Logger,
 		s.IdleTimeout,
 	)
+	hconn.localDatagramModes = localDatagramModes(s.EnableDatagrams, s.AdditionalSettings)
 	go hconn.handleUnidirectionalStreams(s.UniStreamHijacker)
 
 	var nextStreamID quic.StreamID

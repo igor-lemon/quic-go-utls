@@ -292,3 +292,18 @@ This is a generic protocol/resource-lifetime fix, not a selectable browser value
 or a JSON policy change. It shares the current unpublished engine1 release;
 all existing profile values/identities remain unchanged. Full graph/native and
 root/browser revalidation are still required before A11 completion.
+
+## A13 legacy H3 settings capability
+
+Profiles choose RFC9297 and/or draft-08 HTTP Datagrams by their explicit
+SETTINGS IDs. The engine intersects both peers' declarations, prefers RFC9297,
+refuses sending before negotiation or with no common version, and applies the
+negotiated datagram error code. Original legacy SETTINGS remain in Other for
+ALPS/qlog provenance. Extended CONNECT already has an implemented backend API;
+this change does not implement WebTransport or enable it.
+
+Sources: [draft-08 sections2.1,2.1.1.1,5.1,5.2](https://www.ietf.org/archive/id/draft-ietf-masque-h3-datagram-08.html),
+[RFC9297](https://www.rfc-editor.org/rfc/rfc9297.html).
+Controls retain raw local SETTINGS, actual draft payload receive,16 version
+combinations, malformed/duplicate booleans, no-common/pending rejects and
+authenticated peer observations of both datagram error codes.
