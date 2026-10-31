@@ -172,6 +172,9 @@ var (
 )
 
 func (t *Transport) init() error {
+	if err := t.Behavior.Validate(); err != nil {
+		return err
+	}
 	if t.Behavior == nil {
 		t.Behavior = behavior.Legacy()
 	}
@@ -223,6 +226,9 @@ func (t *Transport) init() error {
 			return err
 		}
 		t.transport = &quic.Transport{Conn: udpConn}
+		if t.Behavior.Has("quic.config") {
+			t.transport.ConnectionIDLength = t.Behavior.Int("quic.source_cid_bytes")
+		}
 	}
 	return nil
 }

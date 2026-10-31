@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/netip"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/igor-lemon/quic-go-utls/internal/protocol"
@@ -407,8 +408,12 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 		id = x/31*31 + 27
 	}
 	b = quicvarint.Append(b, id)
-	length := random[1] % 16
-	b = quicvarint.Append(b, uint64(length))
+	length := uint64(random[1] % 16)
+	if pol := p.policy(); pers == protocol.PerspectiveClient && pol.Has("quic.grease_parameter_length_rule") {
+		lo, hi := pol.Uint("quic.grease_parameter_length_min"), pol.Uint("quic.grease_parameter_length_max")
+		length = lo + uint64(random[1])%(hi-lo+1)
+	}
+	b = quicvarint.Append(b, length)
 	b = append(b, random[2:2+length]...)
 
 	// initial_max_stream_data_bidi_local
@@ -521,10 +526,53 @@ func (p *TransportParameters) Marshal(pers protocol.Perspective) []byte {
 		}
 	}
 
+	if pers == protocol.PerspectiveClient && p.policy().Has("quic.parameter_order") {
+		b = orderTransportParameters(b, p.policy().Strings("quic.parameter_order"))
+	}
 	if p.policy().Flag("quic.shuffle_parameters") && pers == protocol.PerspectiveClient {
 		b = shuffleTransportParameters(b)
 	}
 	return b
+}
+
+// Reorder complete, engine-produced TLVs. Values and their encodings are never
+// rebuilt here. Unknown experimental fields retain their relative order at the end.
+func orderTransportParameters(b []byte, order []string) []byte {
+	ranks := make(map[string]int, len(order))
+	for rank, name := range order {
+		ranks[name] = rank
+	}
+	type field struct {
+		data []byte
+		rank int
+	}
+	fields := []field{}
+	for rest := b; len(rest) > 0; {
+		id, n, err := quicvarint.Parse(rest)
+		if err != nil {
+			return b
+		}
+		size, m, err := quicvarint.Parse(rest[n:])
+		if err != nil || size > uint64(len(rest)-n-m) {
+			return b
+		}
+		end := n + m + int(size)
+		rank, known := ranks[strconv.FormatUint(id, 10)]
+		if !known && id >= 27 && (id-27)%31 == 0 {
+			rank, known = ranks["grease"]
+		}
+		if !known {
+			rank = len(order)
+		}
+		fields = append(fields, field{rest[:end], rank})
+		rest = rest[end:]
+	}
+	slices.SortStableFunc(fields, func(a, b field) int { return a.rank - b.rank })
+	out := make([]byte, 0, len(b))
+	for _, f := range fields {
+		out = append(out, f.data...)
+	}
+	return out
 }
 
 // Shuffle complete TLVs, preserving their encoded values, unknown parameters,

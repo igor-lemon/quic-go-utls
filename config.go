@@ -33,6 +33,9 @@ func validateConfig(config *Config) error {
 	if config == nil {
 		return nil
 	}
+	if err := config.Policy().Validate(); err != nil {
+		return err
+	}
 	const maxStreams = 1 << 60
 	if config.MaxIncomingStreams > maxStreams {
 		config.MaxIncomingStreams = maxStreams

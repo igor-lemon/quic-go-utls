@@ -313,3 +313,9 @@ Unselected draft parameters remain unknown extensions. Invalid selected draft
 values use `h3.datagram_setting_error_reason` with actual id/value substitutions;
 Go diagnostic strings are not sent as the wire reason. Raw peer tests prove the
 chosen template on the authenticated close frame and preserve the original RED.
+
+## A13 explicit native transport policies
+
+Shared H3 sockets take source CID length from validated JSON. Client TP TLVs are
+ordered by declared slots without rebuilding their values, with an explicit bounded
+byte-modulo GREASE payload rule. Config validation precedes transport I/O.
