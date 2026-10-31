@@ -117,10 +117,23 @@ func TestA13DraftDatagramValidationAndPendingNegotiation(t *testing.T) {
 			}
 			wire := quicvarint.Append([]byte{4}, uint64(len(body)))
 			wire = append(wire, body...)
-			fp := frameParser{r: bytes.NewReader(wire), booleansAsSaid: asSaid}
+			fp := frameParser{r: bytes.NewReader(wire), booleansAsSaid: asSaid, draftDatagrams: true}
 			_, err := fp.ParseNext(nil)
 			require.Error(t, err)
 		}
 	}
 	require.Zero(t, localDatagramModes(false, map[uint64]uint64{51: 1, 16765559: 1}))
+}
+
+func TestA13UnselectedDraftSettingsRemainUnknown(t *testing.T) {
+	payload := quicvarint.Append(nil, 16765559)
+	payload = quicvarint.Append(payload, 2)
+	wire := quicvarint.Append([]byte{4}, uint64(len(payload)))
+	wire = append(wire, payload...)
+	fp := frameParser{r: bytes.NewReader(wire)}
+	f, err := fp.ParseNext(nil)
+	require.NoError(t, err)
+	sf := f.(*settingsFrame)
+	require.False(t, sf.DatagramDraft08)
+	require.EqualValues(t, 2, sf.Other[16765559])
 }

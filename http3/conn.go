@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/igor-lemon/utls/behavior"
 	"io"
 	"log/slog"
 	"net"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,9 +43,10 @@ type Conn struct {
 	isServer bool
 	logger   *slog.Logger
 
-	enableDatagrams        bool
-	localDatagramModes     uint8
-	negotiatedDatagramMode atomic.Uint32
+	enableDatagrams            bool
+	localDatagramModes         uint8
+	datagramSettingErrorReason string
+	negotiatedDatagramMode     atomic.Uint32
 
 	decoder *qpack.Decoder
 	qpack   *qpackSession
@@ -355,12 +358,13 @@ func (c *Conn) handleUnidirectionalStreams(hijack func(StreamType, quic.Connecti
 }
 
 func (c *Conn) handleControlStream(str *quic.ReceiveStream) {
-	fp := &frameParser{closeConn: c.conn.CloseWithError, r: str, streamID: str.StreamID(), booleansAsSaid: c.alps != nil}
+	fp := &frameParser{closeConn: c.conn.CloseWithError, r: str, streamID: str.StreamID(), booleansAsSaid: c.alps != nil, draftDatagrams: c.localDatagramModes&datagramDraft08 != 0}
 	f, err := fp.ParseNext(c.qlogger)
 	if err != nil {
 		var settingErr *datagramSettingError
 		if errors.As(err, &settingErr) {
-			c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeSettingsError), err.Error())
+			reason, _ := behavior.Template(c.datagramSettingErrorReason, map[string]string{"id": strconv.FormatUint(settingDatagramDraft08, 10), "value": strconv.FormatUint(settingErr.value, 10)})
+			c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeSettingsError), bounded(reason))
 			return
 		}
 		var serr *quic.StreamError

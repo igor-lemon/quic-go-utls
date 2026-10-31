@@ -165,6 +165,7 @@ func newClientConn(
 		0,
 	)
 	c.conn.localDatagramModes = localDatagramModes(c.enableDatagrams, c.additionalSettings)
+	c.conn.datagramSettingErrorReason = pol.Text("h3.datagram_setting_error_reason")
 	c.conn.qpack = newQPACKSession(c.conn, additionalSettings, pol)
 	c.requestWriter.dynamic = c.conn.qpack.encoder
 	c.requestWriter.instructions = c.conn.qpack.encoderWriter
