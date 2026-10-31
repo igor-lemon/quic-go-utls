@@ -218,3 +218,14 @@ func (h *ReceivedPacketHandler) IsPotentiallyDuplicate(pn protocol.PacketNumber,
 	}
 	panic("unexpected encryption level")
 }
+
+// SetInitialACKPolicy configures the initial ACK threshold and the new-gap
+// algorithm before receiving packets. Decimation may later select another count.
+func (h *ReceivedPacketHandler) SetInitialACKPolicy(packets int, reordering protocol.PacketNumber) {
+	if packets > 0 {
+		h.appDataPackets.packetsBeforeAck = packets
+	}
+	if reordering > 0 {
+		h.appDataPackets.reorderingThreshold = reordering
+	}
+}

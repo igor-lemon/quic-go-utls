@@ -17,6 +17,9 @@ import (
 // ProcessUdpPacket), and an ACK alarm late by a part of its delay at most
 // (quic.ack_alarm_slack_percent).
 func (c *Conn) setAckPolicy(pol behavior.Policy) {
+	if pol.Has("quic.ack_initial_packets") || pol.Has("quic.ack_reordering_threshold") {
+		c.receivedPacketHandler.SetInitialACKPolicy(pol.Int("quic.ack_initial_packets"), protocol.PacketNumber(pol.Uint("quic.ack_reordering_threshold")))
+	}
 	if pol.Has("quic.ack_decimation_after") {
 		c.receivedPacketHandler.SetAckDecimation(ackhandler.AckDecimation{
 			After:      protocol.PacketNumber(pol.Uint("quic.ack_decimation_after")),
