@@ -307,3 +307,9 @@ Sources: [draft-08 sections2.1,2.1.1.1,5.1,5.2](https://www.ietf.org/archive/id/
 Controls retain raw local SETTINGS, actual draft payload receive,16 version
 combinations, malformed/duplicate booleans, no-common/pending rejects and
 authenticated peer observations of both datagram error codes.
+
+The client recognizes draft SETTINGS only when its JSON selects draft support.
+Unselected draft parameters remain unknown extensions. Invalid selected draft
+values use `h3.datagram_setting_error_reason` with actual id/value substitutions;
+Go diagnostic strings are not sent as the wire reason. Raw peer tests prove the
+chosen template on the authenticated close frame and preserve the original RED.

@@ -54,6 +54,7 @@ type frameParser struct {
 	// and SETTINGS_H3_DATAGRAM as they are said, for the server's settings to
 	// be taken as a profile says (peerSettings), not refused here
 	booleansAsSaid bool
+	draftDatagrams bool
 }
 
 func (p *frameParser) ParseNext(qlogger qlogwriter.Recorder) (frame, error) {
@@ -107,7 +108,7 @@ func (p *frameParser) ParseNext(qlogger qlogwriter.Recorder) (frame, error) {
 				headerLen: r.NumRead,
 			}, nil
 		case 0x4: // SETTINGS
-			return parseSettingsFrame(r, l, p.streamID, qlogger, p.booleansAsSaid)
+			return parseSettingsFrame(r, l, p.streamID, qlogger, p.booleansAsSaid, p.draftDatagrams)
 		case 0x3: // unsupported: CANCEL_PUSH
 			if qlogger != nil {
 				qlogger.RecordEvent(qlog.FrameParsed{
@@ -212,6 +213,7 @@ func pointer[T any](v T) *T {
 
 func parseSettingsFrame(r *countingByteReader, l uint64, streamID quic.StreamID, qlogger qlogwriter.Recorder, booleansAsSaid ...bool) (*settingsFrame, error) {
 	asSaid := len(booleansAsSaid) > 0 && booleansAsSaid[0]
+	draftDatagrams := len(booleansAsSaid) > 1 && booleansAsSaid[1]
 	if l > 8*(1<<10) {
 		return nil, fmt.Errorf("unexpected size for SETTINGS frame: %d", l)
 	}
@@ -275,10 +277,12 @@ func parseSettingsFrame(r *countingByteReader, l uint64, streamID quic.StreamID,
 				settingsFrame.Datagram = pointer(frame.Datagram)
 			}
 		case settingDatagramDraft08:
-			if val > 1 {
-				return nil, &datagramSettingError{value: val}
+			if draftDatagrams {
+				if val > 1 {
+					return nil, &datagramSettingError{value: val}
+				}
+				frame.DatagramDraft08 = val == 1
 			}
-			frame.DatagramDraft08 = val == 1
 			fallthrough
 		default:
 			if _, ok := frame.Other[id]; ok {
