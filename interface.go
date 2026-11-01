@@ -108,8 +108,23 @@ type ConnectionIDGenerator interface {
 	ConnectionIDLen() int
 }
 
+// NetworkEvent is one actual connection receive or measured RTT event. ReceivedBytes
+// excludes UDP/IP framing. RTT is a new smoothed measurement, never the initial
+// estimate or a restored ticket value. Fields unused by an event are zero.
+type NetworkEvent struct {
+	ConnectionID  ConnectionTracingID
+	Closed        bool
+	RemoteAddr    net.Addr
+	ReceivedBytes int
+	RTT           time.Duration
+}
+
 // Config contains all configuration data needed for a QUIC server or client.
 type Config struct {
+	// NetworkObserver receives actual connection events from receive and connection loops.
+	// It must be concurrency-safe, return promptly, and not call back into this connection.
+	NetworkObserver func(NetworkEvent)
+
 	// ChromeBehavior enables the measured Chromium client CID and transport policy.
 	// It has no effect on servers. A client must use a dedicated UDP socket with
 	// zero-length source IDs (the HTTP/3 Chrome dialer supplies one).

@@ -144,6 +144,7 @@ func populateConfig(config *Config) *Config {
 		EnableStreamResetPartialDelivery: config.EnableStreamResetPartialDelivery,
 		Allow0RTT:                        config.Allow0RTT,
 		Tracer:                           config.Tracer,
+		NetworkObserver:                  config.NetworkObserver,
 	}
 }
 

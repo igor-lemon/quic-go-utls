@@ -326,3 +326,14 @@ Initial ACK packet count and new-gap reordering threshold come from explicit
 policy before receiving packets. The existing delayed/decimated ACK lifecycle
 and low-level default behavior are preserved. Controlled packet sequences prove
 the selected thresholds change ACK emission, without resetting connection state.
+
+- Network-quality observation primitives (A13, bounded network-hints integration):
+  Config.NetworkObserver reports actual delivered datagram bytes once at arrival,
+  including queue drops, and newly measured smoothed RTT; it never replays
+  undecryptable-buffer bytes or reports initial/restored estimates as samples.
+  Observers are concurrent and must return promptly. HTTP/3 composes the fhttp
+  trace for send-start, complete final headers and encoded body activity/ownership
+  across RoundTrip and RequestStream, preserving 103 handling, cancellation,
+  gzip and detached drain semantics. These are generic measurement mechanisms;
+  estimator rules, exclusions, limits and browser values remain profile JSON.
+  Standalone dependencies pin the published fhttp/uTLS observation APIs.

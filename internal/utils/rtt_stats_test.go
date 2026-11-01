@@ -185,3 +185,33 @@ func TestAProbeTimeoutOfOneInitialRTTIsAProfiles(t *testing.T) {
 	r.SetPTOPolicy(PTOPolicy{InitialRTT: 50 * time.Millisecond, NoSampleMultiplier: 1})
 	require.Equal(t, 50*time.Millisecond, r.PTO(false))
 }
+
+func TestRTTObserverOnlyReportsNewMeasurements(t *testing.T) {
+	r := NewRTTStats()
+	var samples []time.Duration
+	r.OnSample = func(v time.Duration) { samples = append(samples, v) }
+	r.SetInitialRTT(20 * time.Millisecond)
+	r.UpdateRTT(0, 0)
+	r.UpdateRTT(-time.Second, 0)
+	if len(samples) != 0 {
+		t.Fatal("reported initial/invalid estimates", samples)
+	}
+	r.UpdateRTT(40*time.Millisecond, 0)
+	r.UpdateRTT(80*time.Millisecond, 0)
+	if len(samples) != 2 || samples[0] != 40*time.Millisecond || samples[1] != 45*time.Millisecond {
+		t.Fatal("missing real smoothed observations", samples)
+	}
+	clone := r.Clone()
+	clone.UpdateRTT(100*time.Millisecond, 0)
+	if len(samples) != 2 {
+		t.Fatal("clone inherited another scope observer")
+	}
+	r.ResetForPathMigration()
+	if len(samples) != 2 {
+		t.Fatal("reset generated synthetic sample")
+	}
+	r.UpdateRTT(70*time.Millisecond, 0)
+	if len(samples) != 3 || samples[2] != 70*time.Millisecond {
+		t.Fatal("lost real sample after migration", samples)
+	}
+}

@@ -37,3 +37,10 @@ func (gz *gzipReader) Read(p []byte) (n int, err error) {
 func (gz *gzipReader) Close() error {
 	return gz.body.Close()
 }
+
+// ResponseBodyReleased forwards ownership independently of decoding or stream close.
+func (gz *gzipReader) ResponseBodyReleased() {
+	if observed, ok := gz.body.(interface{ ResponseBodyReleased() }); ok {
+		observed.ResponseBodyReleased()
+	}
+}

@@ -569,6 +569,11 @@ func (c *Conn) preSetup() {
 		false, // ACK_FREQUENCY is not supported yet
 	)
 	c.rttStats = utils.NewRTTStats()
+	if c.config.NetworkObserver != nil {
+		c.rttStats.OnSample = func(rtt time.Duration) {
+			c.config.NetworkObserver(c.networkEvent(0, rtt, false))
+		}
+	}
 	c.connFlowController = flowcontrol.NewConnectionFlowController(
 		protocol.ByteCount(c.config.InitialConnectionReceiveWindow),
 		protocol.ByteCount(c.config.MaxConnectionReceiveWindow),
@@ -623,7 +628,17 @@ func (c *Conn) preSetup() {
 }
 
 // run the connection main loop
+func (c *Conn) networkEvent(received int, rtt time.Duration, closed bool) NetworkEvent {
+	id, _ := c.ctx.Value(ConnectionTracingKey).(ConnectionTracingID)
+	return NetworkEvent{ConnectionID: id, RemoteAddr: c.conn.RemoteAddr(), ReceivedBytes: received, RTT: rtt, Closed: closed}
+}
+
 func (c *Conn) run() (err error) {
+	defer func() {
+		if c.config.NetworkObserver != nil {
+			c.config.NetworkObserver(c.networkEvent(0, 0, true))
+		}
+	}()
 	defer func() { c.ctxCancel(err) }()
 
 	defer func() {
@@ -2041,6 +2056,13 @@ func (c *Conn) handleFrame(
 
 // handlePacket is called by the server with a new packet
 func (c *Conn) handlePacket(p receivedPacket) {
+	// Observe each delivered UDP datagram once, including queue drops. Replaying
+	// buffered undecryptable packets in handleOnePacket is not a socket receive.
+	if c.config.NetworkObserver != nil {
+		id, _ := c.ctx.Value(ConnectionTracingKey).(ConnectionTracingID)
+		c.config.NetworkObserver(NetworkEvent{ConnectionID: id, RemoteAddr: p.remoteAddr, ReceivedBytes: int(p.Size())})
+	}
+
 	c.receivedPacketMx.Lock()
 	// Discard packets once the amount of queued packets is larger than
 	// the channel size, protocol.MaxConnUnprocessedPackets

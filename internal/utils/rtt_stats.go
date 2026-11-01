@@ -19,6 +19,11 @@ const DefaultInitialRTT = 100 * time.Millisecond
 
 // RTTStats provides round-trip statistics
 type RTTStats struct {
+	// OnSample observes a completed new measurement on the connection loop.
+	// Set before use. Initial/restored estimates and statistics clones do not
+	// generate notifications or inherit the callback.
+	OnSample func(time.Duration)
+
 	hasMeasurement bool
 
 	minRTT        atomic.Int64 // nanoseconds
@@ -136,6 +141,9 @@ func (r *RTTStats) UpdateRTT(sendDelta, ackDelay time.Duration) {
 		newSmoothedRTT := time.Duration((float32(smoothedRTT/time.Microsecond)*oneMinusAlpha)+(float32(sample/time.Microsecond)*rttAlpha)) * time.Microsecond
 		r.meanDeviation.Store(meanDev.Nanoseconds())
 		r.smoothedRTT.Store(newSmoothedRTT.Nanoseconds())
+	}
+	if r.OnSample != nil {
+		r.OnSample(r.SmoothedRTT())
 	}
 }
 

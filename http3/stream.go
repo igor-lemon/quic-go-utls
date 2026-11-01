@@ -179,6 +179,8 @@ type RequestStream struct {
 	disableCompression bool
 	response           *http.Response
 
+	responseTrace *httptrace.ClientTrace
+	requestMethod string
 	sentRequest   bool
 	requestedGzip bool
 	isConnect     bool
@@ -324,6 +326,8 @@ func (s *RequestStream) sendRequestHeader(req *http.Request) error {
 	if s.sentRequest {
 		return errors.New("http3: invalid duplicate use of RequestStream.SendRequestHeader")
 	}
+	s.requestMethod = req.Method
+	s.responseTrace = httptrace.ContextClientTrace(req.Context())
 	if !s.disableCompression && req.Method != http.MethodHead &&
 		req.Header.Get("Accept-Encoding") == "" && req.Header.Get("Range") == "" {
 		s.requestedGzip = true
@@ -390,9 +394,21 @@ func (s *RequestStream) ReadResponse() (*http.Response, error) {
 		return nil, fmt.Errorf("http3: invalid response: %w", err)
 	}
 
+	if trace := s.responseTrace; trace != nil && trace.GotResponseHeaders != nil && (res.StatusCode >= 200 || res.StatusCode == 101) {
+		trace.GotResponseHeaders(s.requestMethod, res.StatusCode)
+	}
+
 	// Check that the server doesn't send more data in DATA frames than indicated by the Content-Length header (if set).
 	// See section 4.1.2 of RFC 9114.
 	respBody := newResponseBody(s.str, res.ContentLength, s.reqDone)
+	if trace := s.responseTrace; trace != nil && trace.GotResponseBodyDone != nil && (res.StatusCode >= 200 || res.StatusCode == 101) {
+		method := s.requestMethod
+		respBody.onDone = func() { trace.GotResponseBodyDone(method) }
+	}
+	if trace := s.responseTrace; trace != nil && trace.GotResponseBodyBytes != nil {
+		method := s.requestMethod
+		respBody.onRead = func(n int) { trace.GotResponseBodyBytes(method, n) }
+	}
 
 	// Rules for when to set Content-Length are defined in https://tools.ietf.org/html/rfc7230#section-3.3.2.
 	isInformational := res.StatusCode >= 100 && res.StatusCode < 200
@@ -411,6 +427,9 @@ func (s *RequestStream) ReadResponse() (*http.Response, error) {
 		s.responseBody = respBody
 	}
 	res.Body = s.responseBody
+	if !isInformational && !isSuccessfulConnect && (s.requestMethod == http.MethodHead || isNoContent || res.StatusCode == http.StatusNotModified || res.ContentLength == 0) {
+		respBody.observeDone()
+	}
 	return res, nil
 }
 
