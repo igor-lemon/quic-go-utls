@@ -91,13 +91,17 @@ func newRequestBody(str *Stream, contentLength int64, connCtx context.Context, r
 }
 
 type hijackableBody struct {
+	onRead func(int) // immutable response activity hook
+	onDone func()
+
 	body body
 
 	// only set for the http.Response
 	// The channel is closed when the user is done with this response:
 	// either when Read() errors, or when Close() is called.
-	reqDone     chan<- struct{}
-	reqDoneOnce sync.Once
+	reqDone         chan<- struct{}
+	reqDoneOnce     sync.Once
+	observationDone sync.Once
 }
 
 var _ io.ReadCloser = &hijackableBody{}
@@ -111,17 +115,25 @@ func newResponseBody(str *Stream, contentLength int64, done chan<- struct{}) *hi
 
 func (r *hijackableBody) Read(b []byte) (int, error) {
 	n, err := r.body.Read(b)
+	if n > 0 && r.onRead != nil {
+		r.onRead(n)
+	}
 	if err != nil {
 		r.requestDone()
 	}
 	return n, maybeReplaceError(err)
 }
 
+func (r *hijackableBody) ResponseBodyReleased() { r.observeDone() }
+func (r *hijackableBody) observeDone() {
+	if r.onDone != nil {
+		r.observationDone.Do(r.onDone)
+	}
+}
 func (r *hijackableBody) requestDone() {
+	r.observeDone()
 	if r.reqDone != nil {
-		r.reqDoneOnce.Do(func() {
-			close(r.reqDone)
-		})
+		r.reqDoneOnce.Do(func() { close(r.reqDone) })
 	}
 }
 

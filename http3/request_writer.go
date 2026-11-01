@@ -91,10 +91,13 @@ func (w *requestWriter) writeRequestHeader(wr io.Writer, req *http.Request, gzip
 	if bundle != nil && written > 0 {
 		w.instructions.waitWritten(req.Context(), written, bundle.Spilled())
 	}
+	trace := httptrace.ContextClientTrace(req.Context())
+	if trace != nil && trace.WriteHeadersStart != nil {
+		trace.WriteHeadersStart(req.Method)
+	}
 	if _, err := wr.Write(buf.Bytes()); err != nil {
 		return err
 	}
-	trace := httptrace.ContextClientTrace(req.Context())
 	traceWroteHeaders(trace)
 	return nil
 }

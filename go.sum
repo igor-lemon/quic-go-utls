@@ -8,10 +8,10 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
-github.com/igor-lemon/fhttp v0.6.10-0.20261027200732-6ccf73f64cb3 h1:3sIaiogGZ1vjfmKkg3ViZ8yDzdTVGxTfIvCGPZdOv/c=
-github.com/igor-lemon/fhttp v0.6.10-0.20261027200732-6ccf73f64cb3/go.mod h1:OhEISWmTJyk462YQ834+Beq6lw2m+5pEAeCf/qxYktI=
-github.com/igor-lemon/utls v1.7.8-barnius.0.20261031222600-bfb5cb3ef7ea h1:zGPUbTHYn9J8+o3xIhJImxP8BW9yS3loumgpetquFvU=
-github.com/igor-lemon/utls v1.7.8-barnius.0.20261031222600-bfb5cb3ef7ea/go.mod h1:PBUuDfiLHP4IL5xJftjjw44xXfY2Pfe0BgYgsEcIc6M=
+github.com/igor-lemon/fhttp v0.6.10-0.20261101025353-bd9be7192a4b h1:gZ0VnMx3dd3V5Pz7S2rRmSkEzBb+xf7afq5dCtvD/Gg=
+github.com/igor-lemon/fhttp v0.6.10-0.20261101025353-bd9be7192a4b/go.mod h1:OhEISWmTJyk462YQ834+Beq6lw2m+5pEAeCf/qxYktI=
+github.com/igor-lemon/utls v1.7.8-barnius.0.20261101043215-2f8200b8a4aa h1:KybldJjhzjq8+a5D0o7zZwIpo//TpsALAsKDUDCYYBc=
+github.com/igor-lemon/utls v1.7.8-barnius.0.20261101043215-2f8200b8a4aa/go.mod h1:PBUuDfiLHP4IL5xJftjjw44xXfY2Pfe0BgYgsEcIc6M=
 github.com/jordanlewis/gcassert v0.0.0-20250430164644-389ef753e22e h1:a+PGEeXb+exwBS3NboqXHyxarD9kaboBbrSp+7GuBuc=
 github.com/jordanlewis/gcassert v0.0.0-20250430164644-389ef753e22e/go.mod h1:ZybsQk6DWyN5t7An1MuPm1gtSZ1xDaTXS9ZjIOxvQrk=
 github.com/klauspost/compress v1.18.2 h1:iiPHWW0YrcFgpBYhsA6D1+fqHssJscY/Tm/y2Uqnapk=

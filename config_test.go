@@ -87,7 +87,7 @@ func configWithNonZeroNonFunctionFields(t *testing.T) *Config {
 		}
 
 		switch fn := typ.Field(i).Name; fn {
-		case "GetConfigForClient", "RequireAddressValidation", "GetLogWriter", "AllowConnectionWindowIncrease", "Tracer", "VerifyHandshake", "InitialData":
+		case "NetworkObserver", "GetConfigForClient", "RequireAddressValidation", "GetLogWriter", "AllowConnectionWindowIncrease", "Tracer", "VerifyHandshake", "InitialData":
 			// Can't compare functions.
 		case "Behavior":
 			f.Set(reflect.ValueOf(behavior.Legacy()))
@@ -218,4 +218,23 @@ func TestProfileBehaviorConfigOwnership(t *testing.T) {
 	populated := populateConfig(c)
 	populated.Behavior["quic.versions"][1] = '2'
 	require.EqualValues(t, []uint64{1}, c.Behavior.Numbers("quic.versions"))
+}
+
+func TestNetworkObserverSurvivesConfigCopies(t *testing.T) {
+	calls := 0
+	c := &Config{NetworkObserver: func(e NetworkEvent) {
+		calls++
+		if e.ReceivedBytes != 7 {
+			t.Error(e)
+		}
+	}}
+	for _, copied := range []*Config{c.Clone(), populateConfig(c)} {
+		if copied.NetworkObserver == nil {
+			t.Fatal("lost network observer")
+		}
+		copied.NetworkObserver(NetworkEvent{ReceivedBytes: 7})
+	}
+	if calls != 2 {
+		t.Fatal("network observer copies", calls)
+	}
 }

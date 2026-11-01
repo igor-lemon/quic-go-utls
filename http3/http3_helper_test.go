@@ -151,6 +151,10 @@ func (t *qlogTrace) AddProducer() qlogwriter.Recorder {
 }
 
 func newConnPairWithRecorder(t *testing.T, clientRecorder, serverRecorder qlogwriter.Recorder) (client, server *quic.Conn) {
+	return newConnPairWithNetworkObserver(t, clientRecorder, serverRecorder, nil)
+}
+
+func newConnPairWithNetworkObserver(t *testing.T, clientRecorder, serverRecorder qlogwriter.Recorder, observer func(quic.NetworkEvent)) (client, server *quic.Conn) {
 	t.Helper()
 
 	ln, err := quic.ListenEarly(
@@ -174,6 +178,7 @@ func newConnPairWithRecorder(t *testing.T, clientRecorder, serverRecorder qlogwr
 		ln.Addr(),
 		getTLSClientConfig(),
 		&quic.Config{
+			NetworkObserver: observer,
 			Tracer: func(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
 				return &qlogTrace{recorder: clientRecorder}
 			},
