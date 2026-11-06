@@ -320,6 +320,12 @@ func (w *requestWriter) encodeHeaders(req *http.Request, addGzipHeader bool, tra
 				continue
 			}
 
+			if k == "cookie" && w.behavior.Flag("h3.cookie_crumbs") {
+				for _, v := range vv {
+					cookieCrumbs(v, func(crumb string) { f(k, crumb) })
+				}
+				continue
+			}
 			for _, v := range vv {
 				f(k, v)
 			}
@@ -410,4 +416,23 @@ func actualContentLength(req *http.Request) int64 {
 		return req.ContentLength
 	}
 	return -1
+}
+
+// cookieCrumbs gives a Cookie's value a field at a time as quiche's
+// ValueSplittingHeaderList crumbles it (CookieCrumbling::kEnabled, as Chrome's
+// QPACK encoder has it): cut at each ';', the one space after it dropped
+// where there is one, the empty crumbs too.
+func cookieCrumbs(value string, f func(string)) {
+	for {
+		cut := strings.IndexByte(value, ';')
+		if cut < 0 {
+			f(value)
+			return
+		}
+		f(value[:cut])
+		value = value[cut+1:]
+		if strings.HasPrefix(value, " ") {
+			value = value[1:]
+		}
+	}
 }
