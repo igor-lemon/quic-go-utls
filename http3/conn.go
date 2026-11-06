@@ -189,9 +189,12 @@ func (c *Conn) openRequestStream(
 	c.streamMx.Unlock()
 	rsp := &http.Response{}
 	trace := httptrace.ContextClientTrace(ctx)
-	rs := newRequestStream(
+	var rs *RequestStream
+	rs = newRequestStream(
 		newStream(hstr, c, trace, func(r io.Reader, hf *headersFrame) error {
-			hdr, err := c.decodeTrailers(r, str.StreamID(), hf, maxHeaderBytes, ctx)
+			// Within the stream's decoding context, as its headers: a reset
+			// of the stream ends a trailer section waiting for inserts too.
+			hdr, err := c.decodeTrailers(r, str.StreamID(), hf, maxHeaderBytes, rs.decodeContext)
 			if err != nil {
 				return err
 			}
