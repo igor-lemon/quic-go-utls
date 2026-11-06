@@ -381,3 +381,13 @@ static table alone too, so that an encoder that refers to nothing
 unacknowledged may refer to them. It does so now, in the same write order.
 `TestDynamicQPACKSectionFeedbackTellsOfInsertsAsQuicheDoes`; 4 mutants killed.
 
+## A trailer section decoded within its stream's context (review 2026-11-05)
+
+A response's trailer section was decoded within the request's context alone,
+its headers' within the stream's decoding context, which a stream let go of
+or reset cancels (`decodeCancel`): a trailer section that waited for inserts
+went on waiting after its body was closed, until the request's deadline. It
+is decoded within the stream's now. `http3/trailer_decode_test.go` (a trailer
+section referring to an insert the server never sends; fails with the old
+code).
+
