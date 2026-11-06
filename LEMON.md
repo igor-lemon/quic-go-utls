@@ -399,3 +399,11 @@ never, and a request without a deadline waited for good. It ends with the
 connection now. `http3/handshake_wait_test.go` (a resumed connection to a
 server gone, closed while a GET waits; fails with the old code).
 
+## A request counted out however it ends (review 2026-11-05, upstream's)
+
+`doRoundTripOpt` counted a request out (`useCount`) only past its dial: one
+given up while its connection was dialed, or whose dial failed, left the
+count up, and CloseIdleConnections passed the connection over for good. It
+is counted out however it ends now. `http3/usecount_test.go` (fails with the
+old code).
+
