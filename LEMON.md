@@ -407,3 +407,12 @@ count up, and CloseIdleConnections passed the connection over for good. It
 is counted out however it ends now. `http3/usecount_test.go` (fails with the
 old code).
 
+## A stream's decoding context ends with it (review 2026-11-05, upstream's)
+
+A request stream's decoding context, made under the request's, was cancelled
+only by a reset or a body let go of: one read to its end lived as long as the
+request's context, and under one that lasts, every request left one behind.
+`Stream.ended`, called as a Read meets the stream's end (after its HEADERS,
+or with its last bytes), cancels it. `TestAStreamReadToItsEndLetsGoOfItsDecodingContext`;
+5 mutants killed.
+

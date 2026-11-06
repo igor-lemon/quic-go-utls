@@ -59,3 +59,38 @@ func TestATrailerSectionWaitingForInsertsEndsWithItsStream(t *testing.T) {
 		t.Fatal("the trailers' decoding went on waiting after the body was let go of")
 	}
 }
+
+// TestAStreamReadToItsEndLetsGoOfItsDecodingContext: the decoding context of
+// a request stream, made under the request's, is cancelled once the stream is
+// read to its end, not left as long as the request's lives.
+func TestAStreamReadToItsEndLetsGoOfItsDecodingContext(t *testing.T) {
+	// The end met after the HEADERS, and with the last bytes of a body.
+	withBody := func(_ *quic.Conn, str *quic.Stream) {
+		_, _ = io.Copy(io.Discard, str)
+		var block bytes.Buffer
+		_ = qpack.NewEncoder(&block).WriteField(qpack.HeaderField{Name: ":status", Value: "200"})
+		frame := quicvarint.Append(quicvarint.Append(nil, 1), uint64(block.Len()))
+		frame = append(append(frame, block.Bytes()...), 0, 1, 'x')
+		_, _ = str.Write(frame)
+		_ = str.Close()
+	}
+	for name, serve := range map[string]func(*quic.Conn, *quic.Stream){"no body": answer, "a body": withBody} {
+		addr := bundleServer(t, &packetsBoth{}, serve)
+		cc := bundleClient(t, addr, bundlePolicy(t, nil))
+		ctx, cancel := context.WithCancel(context.Background())
+		str, err := cc.OpenRequestStream(ctx)
+		require.NoError(t, err)
+		require.NoError(t, str.SendRequestHeader(asked(t, ctx, addr)))
+		require.NoError(t, str.Close())
+		_, err = str.ReadResponse()
+		require.NoError(t, err, name)
+		// One read at a time, its last with the stream's end.
+		buf := make([]byte, 1)
+		for err == nil {
+			_, err = str.Read(buf)
+		}
+		require.ErrorIs(t, err, io.EOF, name)
+		require.ErrorIs(t, str.decodeContext.Err(), context.Canceled, name)
+		cancel()
+	}
+}

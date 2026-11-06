@@ -214,6 +214,9 @@ func (c *Conn) openRequestStream(
 	}
 	rs.decodeContext, rs.cancelDecode = context.WithCancel(ctx)
 	hstr.decodeCancel = rs.cancelDecode
+	// Read to its end, the stream has nothing left to decode, and its
+	// decoding context lives no longer than it.
+	rs.str.ended = rs.cancelDecode
 	if c.qpack != nil && c.qpack.decoderWriter.opportunistic {
 		str.SetResetHandler(hstr.qpackReset)
 	}
