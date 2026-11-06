@@ -361,3 +361,13 @@ a probe that left the connection up, its bytes against the connection's
 window. Without the key, as before. `http3/server_bidi_test.go`; 4 mutants
 killed.
 
+## A connection a request failed on is closed after all (review 2026-11-05, M5)
+
+A request whose stream failed lets go of its client (`removeClient`), and the
+next request dials anew, as upstream's tests hold it; but the connection,
+still up, was then nothing's: Close and CloseIdleConnections passed it over,
+and it went on until its idle timeout, no CONNECTION_CLOSE sent. Such a
+client is kept in `Transport.retired` now (a dialed one not gone), which
+Close closes and CloseIdleConnections closes once nothing uses it, or forgets
+once gone. `http3/retired_test.go`, and gone_test's; 9 mutants killed.
+

@@ -37,6 +37,8 @@ func TestAConnectionThatWentAwayIsDialedAnew(t *testing.T) {
 	_, err := tr.RoundTripOpt(req, RoundTripOpt{OnlyCachedConn: true})
 	require.ErrorIs(t, err, ErrNoCachedConn)
 	require.Len(t, dialed, 2)
+	// Those gone are forgotten, not kept to be closed.
+	require.Empty(t, tr.retired)
 }
 
 func TestARequestThatFailedForgetsItsOwnConnectionAlone(t *testing.T) {
