@@ -454,6 +454,16 @@ func (d *dynamicQPACKDecoder) decodeWithConnection(ctx, connection context.Conte
 			d.reported = req
 		}
 	}
+	// quiche's QpackDecoder::OnDecodingCompleted: after each section, what
+	// was inserted that no acknowledgement told of yet is, with an Insert
+	// Count Increment, so that an encoder that refers to no entry the decoder
+	// has not acknowledged may refer to them.
+	if d.feedbackMode == "on-section" && d.send != nil && connection.Err() == nil && d.reported < d.table.inserted {
+		if err := d.send(appendQPACKInt(nil, 6, 0, d.table.inserted-d.reported)); err != nil && connection.Err() == nil {
+			return nil, err
+		}
+		d.reported = d.table.inserted
+	}
 	return fields, nil
 }
 

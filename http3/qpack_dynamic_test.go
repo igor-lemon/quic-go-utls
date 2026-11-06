@@ -301,6 +301,53 @@ func TestDynamicQPACKInsertFeedbackDoesNotDoubleCountACK(t *testing.T) {
 	}
 }
 
+// TestDynamicQPACKSectionFeedbackTellsOfInsertsAsQuicheDoes holds on-section
+// feedback to quiche's OnDecodingCompleted: a section that refers to the
+// table is acknowledged, and then the inserts no acknowledgement told of go
+// in an Insert Count Increment, after a section that refers to none too.
+func TestDynamicQPACKSectionFeedbackTellsOfInsertsAsQuicheDoes(t *testing.T) {
+	var out bytes.Buffer
+	d := newDynamicQPACKDecoder(128, 1, func(b []byte) error { out.Write(b); return nil })
+	d.feedbackMode = "on-section"
+	said := func(want ...byte) {
+		t.Helper()
+		if !bytes.Equal(out.Bytes(), want) {
+			t.Fatalf("feedback %x, want %x", out.Bytes(), want)
+		}
+		out.Reset()
+	}
+	// Two inserts, a section of the first: acknowledged, then the second.
+	if err := dynamicInstructions(d, []byte{0x3f, 0x61, 0x41, 'x', 0x01, 'a', 0x41, 'y', 0x01, 'b'}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.decode(context.Background(), 0, []byte{2, 0, 0x80}, 4096); err != nil {
+		t.Fatal(err)
+	}
+	said(0x80, 0x01)
+	// An insert, and a section of the static table alone: the increment.
+	if err := dynamicInstructions(d, []byte{0x41, 'z', 0x01, 'c'}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.decode(context.Background(), 4, []byte{0, 0, 0xd1}, 4096); err != nil {
+		t.Fatal(err)
+	}
+	said(0x01)
+	// Nothing inserted since: nothing more.
+	if _, err := d.decode(context.Background(), 8, []byte{0, 0, 0xd1}, 4096); err != nil {
+		t.Fatal(err)
+	}
+	said()
+	// A failed write of it is the section's failure.
+	failing := newDynamicQPACKDecoder(64, 1, func([]byte) error { return io.ErrClosedPipe })
+	failing.feedbackMode = "on-section"
+	if err := dynamicInstructions(failing, []byte{0x3f, 0x21, 0x41, 'x', 0x01, 'a'}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := failing.decode(context.Background(), 0, []byte{0, 0, 0xd1}, 4096); err != io.ErrClosedPipe {
+		t.Fatalf("a failed increment: %v", err)
+	}
+}
+
 func TestDynamicQPACKModuloUsesPeerMaximumNotLocalBudget(t *testing.T) {
 	var instructions []byte
 	e := newDynamicQPACKEncoder("insert", "shorter", "shorter", nil, func(b []byte) error { instructions = append(instructions, b...); return nil })

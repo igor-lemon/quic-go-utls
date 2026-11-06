@@ -371,3 +371,13 @@ client is kept in `Transport.retired` now (a dialed one not gone), which
 Close closes and CloseIdleConnections closes once nothing uses it, or forgets
 once gone. `http3/retired_test.go`, and gone_test's; 9 mutants killed.
 
+## An Insert Count Increment after each section (review 2026-11-05, 1.8)
+
+`h3.qpack.decoder_feedback: on-section` acknowledged a section that referred
+to the table and told of no insert beyond it: quiche's
+QpackDecoder::OnDecodingCompleted (0b2bc13f) then sends an Insert Count
+Increment for every insert no acknowledgement told of, after a section of the
+static table alone too, so that an encoder that refers to nothing
+unacknowledged may refer to them. It does so now, in the same write order.
+`TestDynamicQPACKSectionFeedbackTellsOfInsertsAsQuicheDoes`; 4 mutants killed.
+
