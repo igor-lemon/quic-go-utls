@@ -462,6 +462,9 @@ func (c *ClientConn) roundTrip(req *http.Request) (*http.Response, error) {
 		case <-c.conn.HandshakeComplete():
 		case <-req.Context().Done():
 			return nil, req.Context().Err()
+		case <-c.conn.Context().Done():
+			// A handshake that failed completes never.
+			return nil, context.Cause(c.conn.Context())
 		}
 		if c.conn.alps != nil {
 			// ALPS's settings before the request is written
