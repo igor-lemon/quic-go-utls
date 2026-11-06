@@ -349,3 +349,15 @@ value in one field: other field lines, and other dynamic-table inserts, for a
 request of two cookies or more. Requires utls's key. Tests:
 `http3/cookie_crumbs_test.go`; 6 mutants killed.
 
+## A server's bidirectional stream closes the connection (review 2026-11-05, 1.2)
+
+With `h3.server_bidi_stream_close_reason` (utls registry) and no stream
+hijacker, `refuseBidirectionalStreams` closes the connection at a server's
+first bidirectional stream with H3_STREAM_CREATION_ERROR and that reason, as
+quiche's QuicSpdyClientSession::ShouldCreateIncomingStream does
+(QUIC_HTTP_SERVER_INITIATED_BIDIRECTIONAL_STREAM, 154, "Server created
+bidirectional stream."). Before, nothing accepted the stream: one stream was
+a probe that left the connection up, its bytes against the connection's
+window. Without the key, as before. `http3/server_bidi_test.go`; 4 mutants
+killed.
+
