@@ -59,6 +59,16 @@ type roundTripperWithCount struct {
 	useCount atomic.Int64
 }
 
+// dialed says whether r's connection was made.
+func (r *roundTripperWithCount) dialed() bool {
+	select {
+	case <-r.dialing:
+		return r.dialErr == nil && r.conn != nil
+	default:
+		return false
+	}
+}
+
 // gone says whether r's connection was made and has gone away since.
 func (r *roundTripperWithCount) gone() bool {
 	select {
@@ -154,7 +164,11 @@ type Transport struct {
 
 	newClientConn func(*quic.Conn) clientConn
 
-	clients   map[string]*roundTripperWithCount
+	clients map[string]*roundTripperWithCount
+	// retired are clients a request failed on, let go of while their
+	// connections were up: no request goes on them any more, and
+	// CloseIdleConnections and Close close them, which nothing else would.
+	retired   map[*roundTripperWithCount]struct{}
 	transport *quic.Transport
 	closed    bool
 }
@@ -652,6 +666,12 @@ func (t *Transport) removeClient(hostname string, cl *roundTripperWithCount) {
 	if t.clients[hostname] == cl {
 		delete(t.clients, hostname)
 	}
+	if cl.dialed() && !cl.gone() {
+		if t.retired == nil {
+			t.retired = map[*roundTripperWithCount]struct{}{}
+		}
+		t.retired[cl] = struct{}{}
+	}
 }
 
 // NewClientConn creates a new HTTP/3 client connection on top of a QUIC connection.
@@ -698,6 +718,12 @@ func (t *Transport) Close() error {
 		}
 	}
 	t.clients = nil
+	for cl := range t.retired {
+		if err := cl.Close(); err != nil {
+			return err
+		}
+	}
+	t.retired = nil
 	if t.transport != nil {
 		if err := t.transport.Close(); err != nil {
 			return err
@@ -751,6 +777,12 @@ func (t *Transport) CloseIdleConnections() {
 		if cl.useCount.Load() == 0 {
 			cl.Close()
 			delete(t.clients, hostname)
+		}
+	}
+	for cl := range t.retired {
+		if cl.useCount.Load() == 0 || cl.gone() {
+			cl.Close()
+			delete(t.retired, cl)
 		}
 	}
 }
