@@ -198,9 +198,24 @@ func newClientConn(
 	}()
 	if streamHijacker != nil {
 		go c.handleBidirectionalStreams(streamHijacker)
+	} else if c.behavior.Has("h3.server_bidi_stream_close_reason") {
+		go c.refuseBidirectionalStreams(c.behavior.Text("h3.server_bidi_stream_close_reason"))
 	}
 	go c.conn.handleUnidirectionalStreams(uniStreamHijacker)
 	return c
+}
+
+// refuseBidirectionalStreams closes the connection when its server opens a
+// bidirectional stream, which nothing of HTTP/3 lets it (RFC 9114, section
+// 6.1): H3_STREAM_CREATION_ERROR, with the profile's reason, as quiche's
+// QuicSpdyClientSession::ShouldCreateIncomingStream closes it. Without one a
+// server's stream is passed over, its bytes held against the connection's
+// window.
+func (c *ClientConn) refuseBidirectionalStreams(reason string) {
+	if _, err := c.conn.conn.AcceptStream(context.Background()); err != nil {
+		return
+	}
+	c.conn.CloseWithError(quic.ApplicationErrorCode(ErrCodeStreamCreationError), reason)
 }
 
 // OpenRequestStream opens a new request stream on the HTTP/3 connection.
