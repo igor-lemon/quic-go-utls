@@ -391,3 +391,11 @@ is decoded within the stream's now. `http3/trailer_decode_test.go` (a trailer
 section referring to an insert the server never sends; fails with the old
 code).
 
+## A request's wait for a handshake ends with its connection (review 2026-11-05)
+
+A request on a connection still shaking hands (0-RTT's) waited for
+HandshakeComplete or its own context: a handshake that failed completes
+never, and a request without a deadline waited for good. It ends with the
+connection now. `http3/handshake_wait_test.go` (a resumed connection to a
+server gone, closed while a GET waits; fails with the old code).
+
