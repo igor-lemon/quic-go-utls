@@ -361,6 +361,9 @@ func (t *Transport) doRoundTripOpt(req *http.Request, opt RoundTripOpt, attempt 
 	if err != nil {
 		return nil, err
 	}
+	// Counted down however the request ends, its dial given up too: a count
+	// left up keeps CloseIdleConnections off the connection for good.
+	defer cl.useCount.Add(-1)
 
 	select {
 	case <-cl.dialing:
@@ -372,7 +375,6 @@ func (t *Transport) doRoundTripOpt(req *http.Request, opt RoundTripOpt, attempt 
 		t.removeClient(hostname, cl)
 		return nil, cl.dialErr
 	}
-	defer cl.useCount.Add(-1)
 	var alps *alpsState
 	if cc, ok := cl.clientConn.(*ClientConn); ok {
 		alps = cc.conn.alps
