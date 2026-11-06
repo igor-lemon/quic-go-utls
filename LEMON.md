@@ -337,3 +337,15 @@ the selected thresholds change ACK emission, without resetting connection state.
   gzip and detached drain semantics. These are generic measurement mechanisms;
   estimator rules, exclusions, limits and browser values remain profile JSON.
   Standalone dependencies pin the published fhttp/uTLS observation APIs.
+
+## A Cookie a field a crumb over HTTP/3 (review 2026-11-05, 1.1)
+
+`h3.cookie_crumbs` (utls registry) has the request writer give a Cookie's
+value a field at a time, as quiche's ValueSplittingHeaderList crumbles it
+for Chrome's QPACK encoder (CookieCrumbling::kEnabled, quiche 0b2bc13f): cut
+at each ';', one space after it dropped where there is one, the empty
+crumbs kept (`cookieCrumbs`). HTTP/2 crumbled already, HTTP/3 sent the whole
+value in one field: other field lines, and other dynamic-table inserts, for a
+request of two cookies or more. Requires utls's key. Tests:
+`http3/cookie_crumbs_test.go`; 6 mutants killed.
+
