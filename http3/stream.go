@@ -48,6 +48,9 @@ type Stream struct {
 
 	parseTrailer  func(io.Reader, *headersFrame) error
 	parsedTrailer bool
+	// ended is called as a Read meets the stream's end, when nothing of it
+	// is left to decode.
+	ended func()
 }
 
 func newStream(
@@ -77,6 +80,7 @@ func (s *Stream) Read(b []byte) (int, error) {
 		for {
 			frame, err := s.frameParser.ParseNext(s.qlogger)
 			if err != nil {
+				s.endedAt(err)
 				return 0, err
 			}
 			switch f := frame.(type) {
@@ -113,7 +117,15 @@ func (s *Stream) Read(b []byte) (int, error) {
 		n, err = s.datagramStream.Read(b)
 	}
 	s.bytesRemainingInFrame -= uint64(n)
+	s.endedAt(err)
 	return n, err
+}
+
+// endedAt calls ended when err is the stream's end.
+func (s *Stream) endedAt(err error) {
+	if err == io.EOF && s.ended != nil {
+		s.ended()
+	}
 }
 
 func (s *Stream) hasMoreData() bool {
