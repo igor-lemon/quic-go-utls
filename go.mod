@@ -1,9 +1,9 @@
 module github.com/igor-lemon/quic-go-utls
 
-go 1.24.1
+go 1.25
 
 require (
-	github.com/igor-lemon/fhttp v0.6.10-0.20261101025353-bd9be7192a4b
+	github.com/igor-lemon/fhttp v0.6.10-0.20261108185233-87f7dcb80e8a
 	github.com/quic-go/qpack v0.6.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2
@@ -14,12 +14,12 @@ require (
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.3 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/igor-lemon/utls v1.7.8-barnius.0.20261101043215-2f8200b8a4aa
+	github.com/igor-lemon/utls v1.7.8-barnius.0.20261106190843-4b54ea578c9d
 	github.com/jordanlewis/gcassert v0.0.0-20250430164644-389ef753e22e // indirect
-	github.com/klauspost/compress v1.18.2 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
