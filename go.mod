@@ -1,10 +1,9 @@
 module github.com/igor-lemon/quic-go-utls
 
-go 1.27
+go 1.26.0
 
 require (
 	github.com/igor-lemon/fhttp v0.6.10-0.20261108185233-87f7dcb80e8a
-	github.com/igor-lemon/utls v1.7.8-barnius.0.20261106190843-4b54ea578c9d
 	github.com/quic-go/qpack v0.6.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2
@@ -15,17 +14,18 @@ require (
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.3 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
+	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/igor-lemon/utls v1.7.8-barnius.0.20261106190843-4b54ea578c9d
 	github.com/jordanlewis/gcassert v0.0.0-20250430164644-389ef753e22e // indirect
-	github.com/klauspost/compress v1.20.1 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
-	github.com/molecule-man/go-brrr v1.2.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
-	golang.org/x/tools v0.51.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
@@ -35,6 +35,6 @@ tool (
 	go.uber.org/mock/mockgen
 )
 
-// replace github.com/bogdanfinn/fhttp => ../fhttp
+//replace github.com/igor-lemon/fhttp => ../fhttp
 
-// replace github.com/bogdanfinn/utls => ../utls
+//replace github.com/bogdanfinn/utls => ../utls
