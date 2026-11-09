@@ -1,8 +1,10 @@
 # quic-go-utls for tls-forge
 
-A fork of [bogdanfinn/quic-go-utls](https://github.com/bogdanfinn/quic-go-utls)
-v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
-`tls-forge`, for [tls-forge](https://github.com/Sec-CH-Lemon/tls-forge).
+A fork of
+[bogdanfinn/quic-go-utls](https://github.com/bogdanfinn/quic-go-utls)
+v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), its patches laid
+over v1.0.13-utls since 2026-11-10 (below), on the branch `tls-forge`, for
+[tls-forge](https://github.com/Sec-CH-Lemon/tls-forge).
 
 - The module is `github.com/igor-lemon/quic-go-utls`, and it imports fhttp
   and utls as `github.com/igor-lemon/fhttp` and `github.com/igor-lemon/utls`,
@@ -18,6 +20,9 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   -require=github.com/igor-lemon/utls@<version>` and `go mod tidy`.
 - At the base, `go vet` refuses `integrationtests/self/self_go125_test.go`
   (utls's ConnectionState has no CurveID), upstream as here.
+- Upstream's v1.0.13-utls (`f65539b7`) is merged (2026-11-09): dependency
+  updates and `go 1.27`, which this module does not take (its `go` line is
+  what its dependencies ask). No code changed upstream.
 - A client's QUIC handshake as Chrome 155's, by its profile (2026-10-25):
   one packet number counter for the three spaces from
   `quic.first_packet_number`, numbers as long as quiche's window rule makes
@@ -208,6 +213,46 @@ A6 coordinated dependency also preserves an explicitly configured zero HTTP2 con
   value for x-token`), as x/net's HTTP/2 framer says it: the value may be a
   secret, and the error reaches a caller's logs. `TestRequestHeadersValidation`
   holds it with a secret value in a row of its own.
+
+## The branch: bogdanfinn's release, then the patches (2026-11-10)
+
+`git log --first-parent v1.0.13-utls..tls-forge` lists the branch as it is
+laid out: bogdanfinn's v1.0.13-utls (`f65539b7a324`), then "Rename the module
+...", the rename above, made by a script (the five forks' module paths in
+every Go file and go.mod, imports sorted), then this fork's patches, one
+commit a change, oldest first, as this file tells them. A merge on top, `-s
+ours`, joins the branch's earlier head: the branch only ever moves forward,
+every commit a published pin names stays in it, and the merge's tree is the
+last patch's.
+
+On 2026-11-10 the history to then (74 patches written over v1.0.10-utls, and
+the merge of v1.0.13-utls of 2026-11-09) was laid over v1.0.13-utls so: each
+patch cherry-picked over the renamed release, a conflict resolved toward the
+merge's tree, and what the merge itself had resolved put into the patch it
+belongs to. The last patch's tree is the merge's, byte for byte, but for this
+section. Every commit builds over the series of utls and fhttp; go vet fails
+at two test commits, as it did before ("test: observe cancellation bytes and
+sender packets" and the next, until "test: restore cancellation schedule
+predicate").
+
+To take another release of bogdanfinn's, with tls-forge's
+`scripts/fork_sync.py`, in a clone (this checkout is not touched):
+
+    python3 scripts/fork_sync.py start ../forks/quic-go-utls vX.Y.Z --work /tmp/quic-go-utls-sync
+    # a conflict stops it: resolve it, git add, then
+    python3 scripts/fork_sync.py continue --work /tmp/quic-go-utls-sync
+    # what has to change for it to build, made in the clone, goes into the
+    # patch whose lines it touches (or the one --to "SUBJECT=PATH" names)
+    python3 scripts/fork_sync.py absorb --work /tmp/quic-go-utls-sync
+    python3 scripts/fork_sync.py check --work /tmp/quic-go-utls-sync --with ...
+    python3 scripts/fork_sync.py finish --work /tmp/quic-go-utls-sync -m "Patches laid over vX.Y.Z"
+
+then `git merge --ff-only` of the clone's head on this branch. A conflict that
+only moves an import the rename changed settles itself; git rerere keeps the
+others; go.mod is merged module by module (the higher version) and go.sum by
+union. The forks go in tls-forge's order: utls, fhttp, websocket and
+quic-go-utls, tls-client; `check --with` builds a fork against the new series
+of the ones before it.
 
 ## HTTP/3 response allocation bound (2026-10-29)
 
