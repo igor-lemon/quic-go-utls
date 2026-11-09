@@ -1,7 +1,7 @@
 # quic-go-utls for tls-forge
 
 A fork of [bogdanfinn/quic-go-utls](https://github.com/bogdanfinn/quic-go-utls)
-v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
+v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), with v1.0.13-utls merged, on the branch
 `tls-forge`, for [tls-forge](https://github.com/Sec-CH-Lemon/tls-forge).
 
 - The module is `github.com/igor-lemon/quic-go-utls`, and it imports fhttp
@@ -18,6 +18,9 @@ v1.0.10-utls (`4e6a46505b5f54c5bff5db72b600795648364e09`), on the branch
   -require=github.com/igor-lemon/utls@<version>` and `go mod tidy`.
 - At the base, `go vet` refuses `integrationtests/self/self_go125_test.go`
   (utls's ConnectionState has no CurveID), upstream as here.
+- Upstream's v1.0.13-utls (`f65539b7`) is merged (2026-11-09): dependency
+  updates and `go 1.27`, which this module does not take (its `go` line is
+  what its dependencies ask). No code changed upstream.
 - A client's QUIC handshake as Chrome 155's, by its profile (2026-10-25):
   one packet number counter for the three spaces from
   `quic.first_packet_number`, numbers as long as quiche's window rule makes
