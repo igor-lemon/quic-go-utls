@@ -175,6 +175,9 @@ over v1.0.13-utls since 2026-11-10 (below), on the branch `tls-forge`, for
   since the fork has no public CurveID. Missing/type-changed state fails hard.
   Existing P-384 and X25519MLKEM768 handshake-drop assertions remain unchanged;
   no production API or fabricated group is introduced.
+  Since uTLS took crypto/tls's public `ConnectionState.CurveID`
+  (v1.8.2-barnius, 2026-11-10) that field is gone, and the adapter panicked;
+  it reads the public field again, as upstream quic-go does.
 
 - A6: the initial HTTP3 control stream queues at most the existing QUIC packet
   buffer on the handshake run loop. setupConn writes the rest in its goroutine
