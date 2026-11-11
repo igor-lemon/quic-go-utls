@@ -476,12 +476,18 @@ func testHTTP3ListenerClosing(t *testing.T, graceful, useApplicationListener boo
 					errChan <- err
 					return
 				}
-				select {
-				case <-conn.HandshakeComplete():
-					conn.CloseWithError(1337, "")
-				case <-time.After(time.Second):
-					errChan <- fmt.Errorf("connection did not complete handshake")
+				// Closed once the request's stream came: closed as its
+				// handshake completed, the close could come before the client
+				// opened that stream, and the client then said the
+				// connection's error, not the stream's HTTP/3 one.
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				_, err = conn.AcceptStream(ctx)
+				cancel()
+				if err != nil {
+					errChan <- fmt.Errorf("no request stream: %w", err)
+					return
 				}
+				conn.CloseWithError(1337, "")
 				errChan <- nil
 			}
 		}()
