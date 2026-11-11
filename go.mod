@@ -3,7 +3,7 @@ module github.com/igor-lemon/quic-go-utls
 go 1.27
 
 require (
-	github.com/igor-lemon/fhttp v0.6.10-0.20261110135914-5d69bd7c659e
+	github.com/igor-lemon/fhttp v0.6.10-0.20261111153518-df863b5b1da8
 	github.com/igor-lemon/utls v1.7.8-barnius.0.20261109230756-6be0e3da4e2d
 	github.com/quic-go/qpack v0.6.0
 	github.com/stretchr/testify v1.11.1
