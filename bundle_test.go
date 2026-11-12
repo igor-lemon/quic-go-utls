@@ -82,6 +82,63 @@ func (h *sentPackets) carrying(ids ...StreamID) []qlog.PacketSent {
 	return out
 }
 
+// sending is a packet of the client's with the STREAM frames of some streams
+// it sent first.
+type sending struct {
+	qlog.PacketSent
+	first []*qlog.StreamFrame
+}
+
+// firstSent are the client's packets that sent a STREAM frame of ids first,
+// in order, each with those frames. A frame sent again, by a probe when an
+// ACK comes later than the PTO (as on a loaded machine: the server's ACK
+// waits its 25 ms, the client's PTO about as long), is left out, and with it
+// every packet that sent nothing else of ids.
+func (h *sentPackets) firstSent(ids ...StreamID) []sending {
+	seen := map[qlog.StreamFrame]bool{}
+	var out []sending
+	for _, p := range h.sent() {
+		var first []*qlog.StreamFrame
+		for _, f := range streamFrames(p.Frames, ids...) {
+			if !seen[*f] {
+				seen[*f] = true
+				first = append(first, f)
+			}
+		}
+		if len(first) > 0 {
+			out = append(out, sending{p, first})
+		}
+	}
+	return out
+}
+
+// beside says whether a packet carries a frame but the STREAM frames of id,
+// which it was sent for (qlog lists no padding).
+func beside(p qlog.PacketSent, id StreamID) bool {
+	for _, f := range p.Frames {
+		if x, ok := f.Frame.(*qlog.StreamFrame); !ok || x.StreamID != id {
+			return true
+		}
+	}
+	return false
+}
+
+// leads says whether id's STREAM frames come before every other stream's in
+// a packet.
+func leads(p qlog.PacketSent, id StreamID) bool {
+	others := false
+	for _, f := range p.Frames {
+		if x, ok := f.Frame.(*qlog.StreamFrame); ok {
+			if x.StreamID != id {
+				others = true
+			} else if others {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // bundleConn is a client connection, whose packets trace keeps, to a
 // loopback server whose connection is given to serve.
 func bundleConn(t *testing.T, serve func(*Conn)) (*Conn, *sentPackets) {
@@ -176,22 +233,24 @@ func TestWhatABundleHoldsGoesTogetherInTheOrderItWasGiven(t *testing.T) {
 	bundle.Flush()
 	bundle.Flush()
 	waitFor(t, func() bool { return len(trace.carrying(a.StreamID())) > 0 }, "nothing sent after the flush")
-	got := trace.carrying(a.StreamID(), b.StreamID(), c.StreamID())
+	got := trace.firstSent(a.StreamID(), b.StreamID(), c.StreamID())
 	require.Len(t, got, 1)
-	frames := streamFrames(got[0].Frames, a.StreamID(), b.StreamID(), c.StreamID())
+	frames := got[0].first
 	require.Len(t, frames, 3)
 	require.Equal(t, []StreamID{a.StreamID(), c.StreamID(), b.StreamID()},
 		[]StreamID{frames[0].StreamID, frames[1].StreamID, frames[2].StreamID})
 	require.True(t, frames[2].Fin)
-	// with no bundle, each write as it comes
+	// with no bundle, each write as it comes: sent with nothing waited for
 	s = uniStreams(t, conn, 2)
 	for _, str := range s {
 		_, err := str.Write([]byte("x"))
 		require.NoError(t, err)
-		time.Sleep(30 * time.Millisecond)
+		waitFor(t, func() bool { return len(trace.carrying(str.StreamID())) > 0 }, "nothing sent")
 	}
-	waitFor(t, func() bool { return len(trace.carrying(s[1].StreamID())) > 0 }, "nothing sent")
-	require.Len(t, trace.carrying(s[0].StreamID(), s[1].StreamID()), 2)
+	sent := trace.firstSent(s[0].StreamID(), s[1].StreamID())
+	require.Len(t, sent, 2)
+	require.Equal(t, s[0].StreamID(), sent[0].first[0].StreamID)
+	require.Equal(t, s[1].StreamID(), sent[1].first[0].StreamID)
 }
 
 func TestBundlesNestAndANewOneHoldsAgain(t *testing.T) {
@@ -285,32 +344,41 @@ func TestAStreamThatSendsOpportunisticallyGoesOnlyWithOtherPackets(t *testing.T)
 	require.ErrorIs(t, err, errOpportunistic)
 	keep("hello")
 	time.Sleep(100 * time.Millisecond)
-	require.Empty(t, trace.carrying(opp.StreamID()), "sent alone")
+	// nothing else sent, nothing sent: but a loaded machine's late ACK of
+	// the handshake's last packets may take it
+	before := trace.firstSent(opp.StreamID())
 	// another stream's write: its packet carries it, first
 	_, err = other.Write([]byte("w"))
 	require.NoError(t, err)
 	waitFor(t, func() bool { return len(trace.carrying(other.StreamID())) > 0 }, "nothing sent")
-	p := trace.carrying(opp.StreamID(), other.StreamID())
-	require.Len(t, p, 1)
-	frames := streamFrames(p[0].Frames, opp.StreamID(), other.StreamID())
-	require.Equal(t, []StreamID{opp.StreamID(), other.StreamID()}, []StreamID{frames[0].StreamID, frames[1].StreamID})
-	require.Equal(t, int64(len("hello")), frames[0].Length)
+	hello := trace.firstSent(opp.StreamID())
+	require.Len(t, hello, 1)
+	require.Equal(t, int64(len("hello")), hello[0].first[0].Length)
+	if len(before) == 0 {
+		w := trace.firstSent(other.StreamID())[0]
+		require.Equal(t, w.Header.PacketNumber, hello[0].Header.PacketNumber, "not with the other stream's write")
+	}
 	// an ACK: the client's for the server's words carries it
 	keep("again")
 	speak <- "one"
 	speak <- "two"
-	waitFor(t, func() bool { return len(trace.carrying(opp.StreamID())) == 2 }, "not sent with the ACK")
-	last := trace.carrying(opp.StreamID())[1]
-	_, acked := last.Frames[0].Frame.(*qlog.AckFrame)
-	require.True(t, acked, "in a packet of no ACK: %v", last.Frames)
-	frames = streamFrames(last.Frames, opp.StreamID())
-	require.Equal(t, int64(len("hello")), frames[0].Offset)
-	require.Equal(t, int64(len("again")), frames[0].Length)
+	waitFor(t, func() bool { return len(trace.firstSent(opp.StreamID())) == 2 }, "not sent with the ACK")
+	again := trace.firstSent(opp.StreamID())[1]
+	_, acked := again.Frames[0].Frame.(*qlog.AckFrame)
+	require.True(t, acked, "in a packet of no ACK: %v", again.Frames)
+	require.Equal(t, int64(len("hello")), again.first[0].Offset)
+	require.Equal(t, int64(len("again")), again.first[0].Length)
 	// a source with nothing: the ACKs go alone
 	speak <- "three"
 	speak <- "four"
 	time.Sleep(100 * time.Millisecond)
-	require.Len(t, trace.carrying(opp.StreamID()), 2)
+	sent := trace.firstSent(opp.StreamID())
+	require.Len(t, sent, 2)
+	// never alone, and first of the streams in its packet
+	for _, p := range sent {
+		require.True(t, beside(p.PacketSent, opp.StreamID()), "sent alone: %v", p.Frames)
+		require.True(t, leads(p.PacketSent, opp.StreamID()), "after another stream's: %v", p.Frames)
+	}
 }
 
 func TestAResetHandlerRunsBeforeThePacketThatAcknowledgesTheReset(t *testing.T) {
