@@ -101,8 +101,9 @@ type Transport struct {
 
 	// Dial specifies an optional dial function for creating QUIC
 	// connections for requests.
-	// If Dial is nil, a UDPConn will be created at the first request
-	// and will be reused for subsequent connections to other servers.
+	// If Dial is nil, a UDPConn of the server's address family will be
+	// created at the first request to a server of that family, and will be
+	// reused for subsequent connections to other servers of it.
 	Dial func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error)
 
 	// Enable support for HTTP/3 datagrams (RFC 9297).
@@ -168,9 +169,18 @@ type Transport struct {
 	// retired are clients a request failed on, let go of while their
 	// connections were up: no request goes on them any more, and
 	// CloseIdleConnections and Close close them, which nothing else would.
-	retired   map[*roundTripperWithCount]struct{}
-	transport *quic.Transport
-	closed    bool
+	retired map[*roundTripperWithCount]struct{}
+	closed  bool
+
+	// sockets are the transports of the UDP sockets dial makes when Dial is
+	// nil, one of IPv4 and one of IPv6, each made at its first use and closed
+	// with the Transport. They have a mutex of their own: Close waits for
+	// the dials going on, with mutex held.
+	sockets       [2]*quic.Transport
+	socketsMu     sync.Mutex
+	socketsClosed bool
+	// listenUDP makes a socket of sockets; nil is net.ListenUDP.
+	listenUDP func(network string, laddr *net.UDPAddr) (*net.UDPConn, error)
 }
 
 var (
@@ -234,17 +244,42 @@ func (t *Transport) init() error {
 	if t.QUICConfig.MaxIncomingStreams == 0 {
 		t.QUICConfig.MaxIncomingStreams = -1 // don't allow any bidirectional streams
 	}
-	if t.Dial == nil {
-		udpConn, err := net.ListenUDP("udp", nil)
-		if err != nil {
-			return err
-		}
-		t.transport = &quic.Transport{Conn: udpConn}
-		if t.Behavior.Has("quic.config") {
-			t.transport.ConnectionIDLength = t.Behavior.Int("quic.source_cid_bytes")
-		}
-	}
 	return nil
+}
+
+// socketFor is the transport of the UDP socket of remote's address family,
+// made at its first use: an IPv4 server is dialed from a socket of IPv4
+// alone, an IPv6 one from a socket of IPv6. A dual-stack socket, which this
+// was, may be given a port another socket holds at a specific IPv4 address:
+// macOS hands it out, and a datagram from a server at that address then
+// goes to the other socket, so that the handshake hears nothing. A socket of
+// IPv4 is never given such a port.
+func (t *Transport) socketFor(remote *net.UDPAddr) (*quic.Transport, error) {
+	network, local, i := "udp4", &net.UDPAddr{IP: net.IPv4zero}, 0
+	if remote.IP.To4() == nil {
+		network, local, i = "udp6", &net.UDPAddr{IP: net.IPv6unspecified}, 1
+	}
+	t.socketsMu.Lock()
+	defer t.socketsMu.Unlock()
+	if t.socketsClosed {
+		return nil, ErrTransportClosed
+	}
+	if t.sockets[i] == nil {
+		listen := t.listenUDP
+		if listen == nil {
+			listen = net.ListenUDP
+		}
+		conn, err := listen(network, local)
+		if err != nil {
+			return nil, err
+		}
+		tr := &quic.Transport{Conn: conn}
+		if t.Behavior.Has("quic.config") {
+			tr.ConnectionIDLength = t.Behavior.Int("quic.source_cid_bytes")
+		}
+		t.sockets[i] = tr
+	}
+	return t.sockets[i], nil
 }
 
 // Preconnect establishes and caches a verified QUIC connection without sending
@@ -574,10 +609,14 @@ func (t *Transport) dial(ctx context.Context, hostname string) (*quic.Conn, clie
 			if err != nil {
 				return nil, err
 			}
+			socket, err := t.socketFor(udpAddr)
+			if err != nil {
+				return nil, err
+			}
 			trace := httptrace.ContextClientTrace(ctx)
 			traceConnectStart(trace, network, udpAddr.String())
 			traceTLSHandshakeStart(trace)
-			conn, err := t.transport.DialEarly(ctx, udpAddr, tlsCfg, cfg)
+			conn, err := socket.DialEarly(ctx, udpAddr, tlsCfg, cfg)
 			var state tls.ConnectionState
 			if conn != nil {
 				state = conn.ConnectionState().TLS
@@ -726,14 +765,21 @@ func (t *Transport) Close() error {
 		}
 	}
 	t.retired = nil
-	if t.transport != nil {
-		if err := t.transport.Close(); err != nil {
+	t.socketsMu.Lock()
+	sockets := t.sockets
+	t.sockets = [2]*quic.Transport{}
+	t.socketsClosed = true
+	t.socketsMu.Unlock()
+	for _, socket := range sockets {
+		if socket == nil {
+			continue
+		}
+		if err := socket.Close(); err != nil {
 			return err
 		}
-		if err := t.transport.Conn.Close(); err != nil {
+		if err := socket.Conn.Close(); err != nil {
 			return err
 		}
-		t.transport = nil
 	}
 	t.closed = true
 	return nil
